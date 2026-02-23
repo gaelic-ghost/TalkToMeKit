@@ -6,10 +6,10 @@ import TTMPythonBridge
 import TTMService
 
 struct TTMApi: APIProtocol {
-	private let qwenService: TTMQwenService?
+	private let qwenService: (any TTMQwenServing)?
 	private let logger: Logger
 
-	init(qwenService: TTMQwenService? = nil, logger: Logger = .init(label: "TalkToMeKit.TTMApi")) {
+	init(qwenService: (any TTMQwenServing)? = nil, logger: Logger = .init(label: "TalkToMeKit.TTMApi")) {
 		self.qwenService = qwenService
 		self.logger = logger
 	}
@@ -442,7 +442,7 @@ struct TTMApi: APIProtocol {
 
 	private func synthesizeWithTimeout(
 		request: QwenSynthesisRequest,
-		qwenService: TTMQwenService
+		qwenService: any TTMQwenServing
 	) async throws -> Data {
 		let timeoutCoordinator = SynthesisTimeoutCoordinator()
 		return try await withCheckedThrowingContinuation { continuation in
