@@ -7,7 +7,7 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 
 - In-process CPython embedding is implemented and running.
 - `TTMService` integrates Qwen3-TTS as a `swift-service-lifecycle` service.
-- `TalkToMeServer` exposes `/synthesize` and model status endpoints.
+- `TalkToMeServer` exposes `/synthesize/voice-design`, `/synthesize/custom-voice`, and model status/load endpoints.
 - Bundled runtime auto-discovery is supported via `TTMPythonRuntimeBundle`.
 
 ## Project layout
@@ -52,6 +52,12 @@ Stage runtime + install Qwen deps using `uv` explicitly:
 swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --installer uv --python python3.11
 ```
 
+Restage runtime (wipe existing `Runtime/current`, reinstall deps, and download VD 1.7B + CV 0.6B + CV 1.7B):
+
+```bash
+swift package plugin --allow-network-connections all stage-python-runtime -- --restage
+```
+
 Direct script usage is still available:
 
 ```bash
@@ -79,7 +85,9 @@ swift run TalkToMeServer \
   --hostname 127.0.0.1 \
   --port 8091 \
   --python-runtime-root Sources/TTMPythonRuntimeBundle/Resources/Runtime/current \
-  --python-version 3.11
+  --python-version 3.11 \
+  --qwen-mode voice_design \
+  --qwen-model-id Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
 ```
 
 If no `--python-runtime-root` is provided, the server attempts bundled runtime
@@ -198,17 +206,26 @@ Notes:
 ```bash
 curl -sS http://127.0.0.1:8091/health
 curl -sS http://127.0.0.1:8091/model/status
-curl -sS -o /tmp/tts.wav \
+curl -sS -o /tmp/tts-vd.wav \
   -H 'content-type: application/json' \
-  -d '{"text":"Hello from TalkToMeKit","format":"wav"}' \
-  http://127.0.0.1:8091/synthesize
+  -d '{"text":"Hello from TalkToMeKit","instruct":"Warm narrator voice","language":"English","format":"wav"}' \
+  http://127.0.0.1:8091/synthesize/voice-design
+curl -sS -o /tmp/tts-cv.wav \
+  -H 'content-type: application/json' \
+  -d '{"text":"Hello from TalkToMeKit","speaker":"ryan","language":"English","format":"wav"}' \
+  http://127.0.0.1:8091/synthesize/custom-voice
+curl -sS \
+  -H 'content-type: application/json' \
+  -d '{"mode":"custom_voice","model_id":"Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"}' \
+  http://127.0.0.1:8091/model/load
 ```
 
 ## Runtime environment flags
 
 - `TTM_QWEN_SYNTH_TIMEOUT_SECONDS`: synth request timeout (default `120`).
 - `TTM_QWEN_LOCAL_MODEL_PATH`: override model path.
-- `TTM_QWEN_MODEL_ID`: override default model id.
+- `TTM_QWEN_MODE`: startup mode fallback (`voice_design` default).
+- `TTM_QWEN_ALLOW_CROSS_MODE_FALLBACK`: when enabled (`1`), loader may fall back across known models/modes.
 - `TTM_QWEN_DEVICE_MAP`: torch/qwen device map (default `cpu`). On Apple Silicon, set to `mps` for GPU acceleration.
 - `TTM_QWEN_TORCH_DTYPE`: torch dtype override (`float32` default, `float16` and `bfloat16` supported by runner).
 - `TTM_QWEN_ALLOW_FALLBACK`: allow silent fallback output when model load/synth fails (`1` or `0`).
@@ -233,4 +250,19 @@ unset TTM_QWEN_TORCH_DTYPE
 ```bash
 swift build
 swift test
+```
+
+## Stability smoke
+
+Run both stability scenarios (mode-switch load test + cold-start VoiceDesign test):
+
+```bash
+./scripts/stability_smoke.sh
+```
+
+Run one scenario only:
+
+```bash
+./scripts/stability_smoke.sh --scenario mixed-switch
+./scripts/stability_smoke.sh --scenario cold-start-vd
 ```

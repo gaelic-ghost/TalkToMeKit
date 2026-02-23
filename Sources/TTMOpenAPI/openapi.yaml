@@ -1,13 +1,12 @@
 openapi: 3.1.0
 info:
   title: TalkToMePy Service
-  description: A local TTS service scaffold for future Qwen-3 integration.
-  version: 0.1.0
+  description: A local TTS service for Qwen3-TTS VoiceDesign and CustomVoice modes.
+  version: 0.2.0
 paths:
   /health:
     get:
-      tags:
-      - system
+      tags: [system]
       summary: Health
       operationId: health_health_get
       responses:
@@ -19,8 +18,7 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
   /version:
     get:
-      tags:
-      - system
+      tags: [system]
       summary: Version
       operationId: version_version_get
       responses:
@@ -32,8 +30,7 @@ paths:
                 $ref: '#/components/schemas/VersionResponse'
   /adapters:
     get:
-      tags:
-      - adapters
+      tags: [adapters]
       summary: Adapters
       operationId: adapters_adapters_get
       responses:
@@ -45,17 +42,15 @@ paths:
                 $ref: '#/components/schemas/AdaptersResponse'
   /adapters/{adapter_id}/status:
     get:
-      tags:
-      - adapters
+      tags: [adapters]
       summary: Adapter Status
       operationId: adapter_status_adapters__adapter_id__status_get
       parameters:
-      - name: adapter_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Adapter Id
+        - name: adapter_id
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful Response
@@ -63,16 +58,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AdapterStatusResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /model/status:
     get:
-      tags:
-      - system
+      tags: [system]
       summary: Model Status
       operationId: model_status_model_status_get
       responses:
@@ -84,10 +72,15 @@ paths:
                 $ref: '#/components/schemas/ModelStatusResponse'
   /model/load:
     post:
-      tags:
-      - system
+      tags: [system]
       summary: Model Load
       operationId: model_load_model_load_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelLoadRequest'
       responses:
         '200':
           description: Successful Response
@@ -101,10 +94,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelStatusResponse'
+        '400':
+          description: Invalid mode/model selection.
   /model/unload:
     post:
-      tags:
-      - system
+      tags: [system]
       summary: Model Unload
       operationId: model_unload_model_unload_post
       responses:
@@ -114,18 +108,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelStatusResponse'
-  /synthesize:
+  /synthesize/voice-design:
     post:
-      tags:
-      - tts
-      summary: Synthesize
-      operationId: synthesize_synthesize_post
+      tags: [tts]
+      summary: Synthesize VoiceDesign
+      operationId: synthesize_voice_design_synthesize_voice_design_post
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SynthesizeRequest'
-        required: true
+              $ref: '#/components/schemas/SynthesizeVoiceDesignRequest'
       responses:
         '200':
           description: Generated WAV audio bytes.
@@ -140,27 +133,20 @@ paths:
           description: Model is loading or runtime dependency unavailable.
         '500':
           description: Model load/synthesis failure.
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /synthesize/stream:
+  /synthesize/custom-voice:
     post:
-      tags:
-      - tts
-      summary: Synthesize Stream
-      operationId: synthesize_stream_synthesize_stream_post
+      tags: [tts]
+      summary: Synthesize CustomVoice
+      operationId: synthesize_custom_voice_synthesize_custom_voice_post
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SynthesizeRequest'
-        required: true
+              $ref: '#/components/schemas/SynthesizeCustomVoiceRequest'
       responses:
         '200':
-          description: Generated WAV audio stream.
+          description: Generated WAV audio bytes.
           content:
             audio/wav:
               schema:
@@ -172,236 +158,140 @@ paths:
           description: Model is loading or runtime dependency unavailable.
         '500':
           description: Model load/synthesis failure.
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    ModelMode:
+      type: string
+      enum:
+        - voice_design
+        - custom_voice
+    ModelId:
+      type: string
+      enum:
+        - Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
+        - Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+        - Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
     AdapterInfo:
+      type: object
+      required: [id, name, status_path]
       properties:
         id:
           type: string
-          title: Id
         name:
           type: string
-          title: Name
         status_path:
           type: string
-          title: Status Path
+    AdaptersResponse:
       type: object
-      required:
-      - id
-      - name
-      - status_path
-      title: AdapterInfo
+      required: [adapters]
+      properties:
+        adapters:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdapterInfo'
     AdapterStatusResponse:
+      type: object
+      required: [adapter_id, mode, model_id, loaded, loading, qwen_tts_available, ready, detail]
       properties:
         adapter_id:
           type: string
-          title: Adapter Id
+        mode:
+          $ref: '#/components/schemas/ModelMode'
         model_id:
-          type: string
-          title: Model Id
+          $ref: '#/components/schemas/ModelId'
         loaded:
           type: boolean
-          title: Loaded
         loading:
           type: boolean
-          title: Loading
-        sox_available:
-          type: boolean
-          title: Sox Available
         qwen_tts_available:
           type: boolean
-          title: Qwen Tts Available
-        load_error:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Load Error
-        seconds_since_last_use:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Seconds Since Last Use
-        idle_unload_seconds:
-          type: integer
-          title: Idle Unload Seconds
-        auto_unload_enabled:
-          type: boolean
-          title: Auto Unload Enabled
         ready:
           type: boolean
-          title: Ready
         detail:
           type: string
-          title: Detail
-      type: object
-      required:
-      - adapter_id
-      - model_id
-      - loaded
-      - loading
-      - sox_available
-      - qwen_tts_available
-      - load_error
-      - seconds_since_last_use
-      - idle_unload_seconds
-      - auto_unload_enabled
-      - ready
-      - detail
-      title: AdapterStatusResponse
-    AdaptersResponse:
-      properties:
-        adapters:
-          items:
-            $ref: '#/components/schemas/AdapterInfo'
-          type: array
-          title: Adapters
-      type: object
-      required:
-      - adapters
-      title: AdaptersResponse
-    HTTPValidationError:
-      properties:
-        detail:
-          items:
-            $ref: '#/components/schemas/ValidationError'
-          type: array
-          title: Detail
-      type: object
-      title: HTTPValidationError
-    HealthResponse:
-      properties:
-        status:
-          type: string
-          title: Status
-          default: ok
-        service:
-          type: string
-          title: Service
-          default: talktomepy
-      type: object
-      title: HealthResponse
     ModelStatusResponse:
+      type: object
+      required: [mode, model_id, loaded, loading, qwen_tts_available, ready, detail]
       properties:
+        mode:
+          $ref: '#/components/schemas/ModelMode'
         model_id:
-          type: string
-          title: Model Id
+          $ref: '#/components/schemas/ModelId'
         loaded:
           type: boolean
-          title: Loaded
         loading:
           type: boolean
-          title: Loading
-        sox_available:
-          type: boolean
-          title: Sox Available
         qwen_tts_available:
           type: boolean
-          title: Qwen Tts Available
-        load_error:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Load Error
-        seconds_since_last_use:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Seconds Since Last Use
-        idle_unload_seconds:
-          type: integer
-          title: Idle Unload Seconds
-        auto_unload_enabled:
-          type: boolean
-          title: Auto Unload Enabled
         ready:
           type: boolean
-          title: Ready
         detail:
           type: string
-          title: Detail
+    ModelLoadRequest:
       type: object
-      required:
-      - model_id
-      - loaded
-      - loading
-      - sox_available
-      - qwen_tts_available
-      - load_error
-      - seconds_since_last_use
-      - idle_unload_seconds
-      - auto_unload_enabled
-      - ready
-      - detail
-      title: ModelStatusResponse
-    SynthesizeRequest:
+      required: [mode]
+      properties:
+        mode:
+          $ref: '#/components/schemas/ModelMode'
+        model_id:
+          $ref: '#/components/schemas/ModelId'
+    SynthesizeVoiceDesignRequest:
+      type: object
+      required: [text, instruct, language]
       properties:
         text:
           type: string
-          maxLength: 2000
           minLength: 1
-          title: Text
+          maxLength: 2000
         instruct:
           type: string
-          title: Instruct
+          minLength: 1
           default: A warm and clear speaking voice with natural pacing.
         language:
           type: string
-          title: Language
+          minLength: 1
           default: English
+        model_id:
+          $ref: '#/components/schemas/ModelId'
         format:
           type: string
-          title: Format
           default: wav
+    SynthesizeCustomVoiceRequest:
       type: object
-      required:
-      - text
-      title: SynthesizeRequest
-    ValidationError:
+      required: [text, speaker, language]
       properties:
-        loc:
-          items:
-            anyOf:
-            - type: string
-            - type: integer
-          type: array
-          title: Location
-        msg:
+        text:
           type: string
-          title: Message
-        type:
+          minLength: 1
+          maxLength: 2000
+        speaker:
           type: string
-          title: Error Type
-        input:
-          title: Input
-        ctx:
-          type: object
-          title: Context
+          minLength: 1
+          default: ryan
+        language:
+          type: string
+          minLength: 1
+          default: English
+        model_id:
+          $ref: '#/components/schemas/ModelId'
+        format:
+          type: string
+          default: wav
+    HealthResponse:
       type: object
-      required:
-      - loc
-      - msg
-      - type
-      title: ValidationError
+      properties:
+        status:
+          type: string
+          default: ok
+        service:
+          type: string
+          default: talktomepy
     VersionResponse:
+      type: object
       properties:
         service:
           type: string
-          title: Service
         api_version:
           type: string
-          title: Api Version
         openapi_version:
           type: string
-          title: Openapi Version
-      type: object
-      required:
-      - service
-      - api_version
-      - openapi_version
-      title: VersionResponse

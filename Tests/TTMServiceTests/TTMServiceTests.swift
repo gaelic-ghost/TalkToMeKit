@@ -133,7 +133,14 @@ struct TTMServiceTests {
 	func bridgeSynthesizeWithoutInitializeThrows() async {
 		let bridge = TTMPythonBridge()
 		do {
-			_ = try await bridge.synthesize(.init(text: "hello"))
+			_ = try await bridge.synthesize(
+				.customVoice(
+					text: "hello",
+					speaker: "serena",
+					language: "English",
+					modelID: .customVoice0_6B
+				)
+			)
 			Issue.record("Expected synthesize to throw when bridge is uninitialized")
 		} catch let error as TTMPythonBridgeError {
 			#expect(error == .notInitialized)
@@ -153,7 +160,7 @@ struct TTMServiceTests {
 	func bridgeLoadModelWithoutInitializeThrows() async {
 		let bridge = TTMPythonBridge()
 		do {
-			_ = try await bridge.loadModel()
+			_ = try await bridge.loadModel(selection: .defaultVoiceDesign)
 			Issue.record("Expected loadModel to throw when bridge is uninitialized")
 		} catch let error as TTMPythonBridgeError {
 			#expect(error == .notInitialized)
@@ -188,8 +195,49 @@ struct TTMServiceTests {
 		}
 	}
 
-	@Test("Bridge can initialize and synthesize with bundled runtime when available")
-	func bridgeIntegrationWithBundledRuntimeIfAvailable() async {
+	@Test("Bridge integrates VoiceDesign 1.7B when bundled model is available")
+	func bridgeIntegratesVoiceDesign17BIfAvailable() async {
+		await assertBundledRuntimeSynthesisIfModelAvailable(
+			selection: .init(mode: .voiceDesign, modelID: .voiceDesign1_7B),
+			request: .voiceDesign(
+				text: "Integration smoke test for voice design",
+				instruct: "Warm narrator voice",
+				language: "English",
+				modelID: .voiceDesign1_7B
+			)
+		)
+	}
+
+	@Test("Bridge integrates CustomVoice 0.6B when bundled model is available")
+	func bridgeIntegratesCustomVoice06BIfAvailable() async {
+		await assertBundledRuntimeSynthesisIfModelAvailable(
+			selection: .init(mode: .customVoice, modelID: .customVoice0_6B),
+			request: .customVoice(
+				text: "Integration smoke test for custom voice",
+				speaker: "serena",
+				language: "English",
+				modelID: .customVoice0_6B
+			)
+		)
+	}
+
+	@Test("Bridge integrates CustomVoice 1.7B when bundled model is available")
+	func bridgeIntegratesCustomVoice17BIfAvailable() async {
+		await assertBundledRuntimeSynthesisIfModelAvailable(
+			selection: .init(mode: .customVoice, modelID: .customVoice1_7B),
+			request: .customVoice(
+				text: "Integration smoke test for custom voice one point seven",
+				speaker: "serena",
+				language: "English",
+				modelID: .customVoice1_7B
+			)
+		)
+	}
+
+	private func assertBundledRuntimeSynthesisIfModelAvailable(
+		selection: QwenModelSelection,
+		request: QwenSynthesisRequest
+	) async {
 		guard
 			let bundledRuntime = TTMPythonRuntimeBundleLocator.bundledRuntime(pythonVersion: "3.11"),
 			let modulePath = TTMPythonBridgeResources.pythonModulesPath
@@ -199,17 +247,11 @@ struct TTMServiceTests {
 
 		setenv("TTM_QWEN_ALLOW_FALLBACK", "1", 1)
 		defer { unsetenv("TTM_QWEN_ALLOW_FALLBACK") }
-		let localModelPath = bundledRuntime.rootURL
+		let bundledModelPath = bundledRuntime.rootURL
 			.appendingPathComponent("models")
-			.appendingPathComponent("Qwen3-TTS-12Hz-0.6B-CustomVoice")
-		let hasLocalModel = FileManager.default.fileExists(atPath: localModelPath.path)
-		if FileManager.default.fileExists(atPath: localModelPath.path) {
-			setenv("TTM_QWEN_LOCAL_MODEL_PATH", localModelPath.path, 1)
-		}
-		defer {
-			if hasLocalModel {
-				unsetenv("TTM_QWEN_LOCAL_MODEL_PATH")
-			}
+			.appendingPathComponent(selection.modelID.rawValue.split(separator: "/").last.map(String.init) ?? "")
+		guard FileManager.default.fileExists(atPath: bundledModelPath.path) else {
+			return
 		}
 
 		let bridge = TTMPythonBridge()
@@ -224,12 +266,12 @@ struct TTMServiceTests {
 			try await bridge.initialize(configuration: configuration)
 			try await bridge.importQwenModule()
 			let loaded = try await withTimeout(seconds: 90) {
-				try await bridge.loadModel()
+				try await bridge.loadModel(selection: selection)
 			}
 			#expect(loaded)
 
 			let audio = try await withTimeout(seconds: 90) {
-				try await bridge.synthesize(.init(text: "Integration smoke test"))
+				try await bridge.synthesize(request)
 			}
 			#expect(!audio.isEmpty)
 			#expect(audio.count > 44)

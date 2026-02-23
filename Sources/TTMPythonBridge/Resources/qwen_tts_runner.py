@@ -1,10 +1,11 @@
 """TalkToMeKit Qwen3-TTS runner.
 
 This module is imported by the in-process CPython bridge and provides:
-    load_model() -> bool
+    load_model(mode: str, model_id: str) -> bool
     unload_model() -> bool
     is_model_loaded() -> bool
-    synthesize(text: str, voice: str, sample_rate: int) -> bytes
+    synthesize_voice_design(text: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes
+    synthesize_custom_voice(text: str, speaker: str, language: str, sample_rate: int, model_id: str) -> bytes
 """
 
 from __future__ import annotations
@@ -19,13 +20,27 @@ from typing import Any, Optional, Sequence
 _MODEL_LOADED = False
 _QWEN_MODEL: Optional[Any] = None
 _QWEN_MODULE: Optional[Any] = None
+_ACTIVE_MODE: Optional[str] = None
+_ACTIVE_MODEL_ID: Optional[str] = None
 
-_MODEL_ID = os.getenv("TTM_QWEN_MODEL_ID", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice")
-_MODEL_MODE = os.getenv("TTM_QWEN_MODEL_MODE", "custom_voice")
-_LANGUAGE = os.getenv("TTM_QWEN_LANGUAGE", "auto")
-_DEFAULT_SPEAKER = os.getenv("TTM_QWEN_SPEAKER", "serena")
+DEFAULT_MODE = os.getenv("TTM_QWEN_MODE", "voice_design")
+DEFAULT_VOICE_DESIGN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+DEFAULT_CUSTOM_VOICE_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+DEFAULT_LANGUAGE = os.getenv("TTM_QWEN_LANGUAGE", "English")
+DEFAULT_SPEAKER = os.getenv("TTM_QWEN_SPEAKER", "ryan")
 _ALLOW_FALLBACK = os.getenv("TTM_QWEN_ALLOW_FALLBACK", "0") == "1"
 _DEBUG = os.getenv("TTM_QWEN_DEBUG", "0") == "1"
+_ALLOW_CROSS_MODE_FALLBACK = os.getenv("TTM_QWEN_ALLOW_CROSS_MODE_FALLBACK", "1") == "1"
+
+MODEL_REGISTRY: dict[str, list[str]] = {
+    "voice_design": [
+        DEFAULT_VOICE_DESIGN_MODEL,
+    ],
+    "custom_voice": [
+        DEFAULT_CUSTOM_VOICE_MODEL,
+        "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    ],
+}
 
 
 def _silent_wav(sample_rate: int, seconds: float = 0.35) -> bytes:
@@ -74,7 +89,6 @@ def _to_wav_bytes(samples: Sequence[float], sample_rate: int) -> bytes:
 
 
 def _normalize_samples(data: Any) -> Sequence[float]:
-    # PyTorch/Numpy style containers.
     if hasattr(data, "detach") and callable(data.detach):
         try:
             data = data.detach().cpu().numpy().tolist()
@@ -86,7 +100,6 @@ def _normalize_samples(data: Any) -> Sequence[float]:
         except Exception:
             pass
 
-    # Common model output: [ [samples...] ] for single-item batch.
     if isinstance(data, tuple):
         data = list(data)
 
@@ -118,15 +131,18 @@ def _extract_audio_and_sample_rate(output: Any, default_sample_rate: int) -> tup
     return output, default_sample_rate
 
 
-def _resolve_local_model_path() -> Optional[str]:
-    value = os.getenv("TTM_QWEN_LOCAL_MODEL_PATH")
-    if value:
-        return value
+def _resolve_local_model_path(model_id: str) -> Optional[str]:
+    explicit = os.getenv("TTM_QWEN_LOCAL_MODEL_PATH")
+    if explicit:
+        return explicit
+
     python_home = os.getenv("PYTHONHOME")
-    if python_home:
-        local_candidate = os.path.join(python_home, "models", os.path.basename(_MODEL_ID))
-        if os.path.isdir(local_candidate):
-            return local_candidate
+    if not python_home:
+        return None
+
+    local_candidate = os.path.join(python_home, "models", os.path.basename(model_id))
+    if os.path.isdir(local_candidate):
+        return local_candidate
     return None
 
 
@@ -156,7 +172,6 @@ def _torch_debug_summary() -> str:
 
 
 def _target_dtype() -> Any:
-    # Keep this conservative for portable macOS embedding.
     try:
         import torch  # type: ignore[import-not-found]
     except Exception:
@@ -184,7 +199,7 @@ def _load_qwen_module() -> Optional[Any]:
     return _QWEN_MODULE
 
 
-def _create_model() -> Optional[Any]:
+def _create_model(model_id: str) -> Optional[Any]:
     qwen_module = _load_qwen_module()
     if qwen_module is None:
         return None
@@ -193,7 +208,7 @@ def _create_model() -> Optional[Any]:
     if model_type is None:
         return None
 
-    source = _resolve_local_model_path() or _MODEL_ID
+    source = _resolve_local_model_path(model_id) or model_id
     kwargs = {
         "device_map": os.getenv("TTM_QWEN_DEVICE_MAP", "cpu"),
     }
@@ -210,35 +225,99 @@ def _create_model() -> Optional[Any]:
     return model_type.from_pretrained(source, **kwargs)
 
 
-def load_model() -> bool:
+def _resolve_mode(mode: Optional[str]) -> str:
+    requested = (mode or DEFAULT_MODE).strip().lower()
+    if requested not in MODEL_REGISTRY:
+        return DEFAULT_MODE
+    return requested
+
+
+def _resolve_default_model_for_mode(mode: str) -> str:
+    return MODEL_REGISTRY[mode][0]
+
+
+def _resolve_model(mode: str, model_id: Optional[str]) -> str:
+    requested = (model_id or "").strip()
+    if not requested:
+        return _resolve_default_model_for_mode(mode)
+    return requested
+
+
+def _candidates_for_mode(mode: str, requested_model: str) -> list[tuple[str, str]]:
+    ordered: list[tuple[str, str]] = []
+
+    same_mode = MODEL_REGISTRY.get(mode, [])
+    if requested_model:
+        ordered.append((mode, requested_model))
+
+    for model_id in same_mode:
+        if model_id != requested_model:
+            ordered.append((mode, model_id))
+
+    if _ALLOW_CROSS_MODE_FALLBACK:
+        for fallback_mode, model_ids in MODEL_REGISTRY.items():
+            if fallback_mode == mode:
+                continue
+            for model_id in model_ids:
+                if model_id == requested_model:
+                    continue
+                ordered.append((fallback_mode, model_id))
+
+    seen: set[tuple[str, str]] = set()
+    unique: list[tuple[str, str]] = []
+    for entry in ordered:
+        if entry in seen:
+            continue
+        seen.add(entry)
+        unique.append(entry)
+    return unique
+
+
+def load_model(mode: Optional[str] = None, model_id: Optional[str] = None) -> bool:
     global _MODEL_LOADED
     global _QWEN_MODEL
+    global _ACTIVE_MODE
+    global _ACTIVE_MODEL_ID
 
-    if _MODEL_LOADED and _QWEN_MODEL is not None:
+    resolved_mode = _resolve_mode(mode)
+    resolved_model = _resolve_model(resolved_mode, model_id)
+
+    if _MODEL_LOADED and _QWEN_MODEL is not None and _ACTIVE_MODE == resolved_mode and _ACTIVE_MODEL_ID == resolved_model:
         _debug("model already loaded")
         return True
 
-    started_at = time.monotonic()
-    model = _create_model()
-    elapsed = time.monotonic() - started_at
-    if model is None:
-        _QWEN_MODEL = None
-        _MODEL_LOADED = False
-        _debug(f"model load failed in {elapsed:.2f}s; fallback_allowed={_ALLOW_FALLBACK}")
-        return _ALLOW_FALLBACK
+    for candidate_mode, candidate_model in _candidates_for_mode(resolved_mode, resolved_model):
+        started_at = time.monotonic()
+        model = _create_model(candidate_model)
+        elapsed = time.monotonic() - started_at
+        if model is None:
+            _debug(f"model load failed mode={candidate_mode!r} model={candidate_model!r} in {elapsed:.2f}s")
+            continue
 
-    _QWEN_MODEL = model
-    _MODEL_LOADED = True
-    _debug(f"model loaded in {elapsed:.2f}s")
-    return True
+        _QWEN_MODEL = model
+        _MODEL_LOADED = True
+        _ACTIVE_MODE = candidate_mode
+        _ACTIVE_MODEL_ID = candidate_model
+        _debug(f"model loaded mode={candidate_mode!r} model={candidate_model!r} in {elapsed:.2f}s")
+        return True
+
+    _QWEN_MODEL = None
+    _MODEL_LOADED = False
+    _ACTIVE_MODE = None
+    _ACTIVE_MODEL_ID = None
+    return _ALLOW_FALLBACK
 
 
 def unload_model() -> bool:
     global _MODEL_LOADED
     global _QWEN_MODEL
+    global _ACTIVE_MODE
+    global _ACTIVE_MODEL_ID
 
     _QWEN_MODEL = None
     _MODEL_LOADED = False
+    _ACTIVE_MODE = None
+    _ACTIVE_MODEL_ID = None
     return True
 
 
@@ -246,56 +325,90 @@ def is_model_loaded() -> bool:
     return _MODEL_LOADED
 
 
-def _generate_with_qwen(text: str, voice: str) -> Optional[bytes]:
+def _ensure_loaded(mode: str, model_id: str) -> bool:
+    if _MODEL_LOADED and _QWEN_MODEL is not None and _ACTIVE_MODE == mode and _ACTIVE_MODEL_ID == model_id:
+        return True
+    return load_model(mode=mode, model_id=model_id)
+
+
+def _generate_voice_design(text: str, instruct: str, language: str) -> Optional[bytes]:
     if _QWEN_MODEL is None:
         return None
 
-    language = _LANGUAGE
-    if language == "auto":
-        language = "auto"
-
-    if _MODEL_MODE == "voice_design":
-        output = _QWEN_MODEL.generate_voice_design(
-            text=text,
-            language=language,
-            instruct=voice or "",
-        )
-    else:
-        requested_speaker = (voice or _DEFAULT_SPEAKER).lower()
-        get_supported_speakers = getattr(_QWEN_MODEL, "get_supported_speakers", None)
-        if callable(get_supported_speakers):
-            supported = get_supported_speakers() or []
-            if supported and requested_speaker not in supported:
-                requested_speaker = supported[0]
-        output = _QWEN_MODEL.generate_custom_voice(
-            text=text,
-            language=language,
-            speaker=requested_speaker,
-        )
-
+    output = _QWEN_MODEL.generate_voice_design(
+        text=text,
+        language=language,
+        instruct=instruct,
+    )
     wav_payload, sr = _extract_audio_and_sample_rate(output, 24_000)
-
     if isinstance(wav_payload, (bytes, bytearray, memoryview)):
         return bytes(wav_payload)
     if wav_payload is not None:
         return _to_wav_bytes(_normalize_samples(wav_payload), sr)
-
     return None
 
 
-def synthesize(text: str, voice: str, sample_rate: int) -> bytes:
-    """Synthesize speech and return WAV bytes."""
+def _generate_custom_voice(text: str, speaker: str, language: str) -> Optional[bytes]:
+    if _QWEN_MODEL is None:
+        return None
+
+    requested_speaker = (speaker or DEFAULT_SPEAKER).lower()
+    get_supported_speakers = getattr(_QWEN_MODEL, "get_supported_speakers", None)
+    if callable(get_supported_speakers):
+        supported = get_supported_speakers() or []
+        if supported and requested_speaker not in supported:
+            requested_speaker = supported[0]
+
+    output = _QWEN_MODEL.generate_custom_voice(
+        text=text,
+        language=language,
+        speaker=requested_speaker,
+    )
+    wav_payload, sr = _extract_audio_and_sample_rate(output, 24_000)
+    if isinstance(wav_payload, (bytes, bytearray, memoryview)):
+        return bytes(wav_payload)
+    if wav_payload is not None:
+        return _to_wav_bytes(_normalize_samples(wav_payload), sr)
+    return None
+
+
+def synthesize_voice_design(text: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes:
     if not text.strip():
         raise ValueError("text must not be empty")
 
-    if not is_model_loaded() and not load_model():
+    resolved_mode = "voice_design"
+    resolved_model = _resolve_model(resolved_mode, model_id)
+    resolved_language = language or DEFAULT_LANGUAGE
+
+    if not _ensure_loaded(mode=resolved_mode, model_id=resolved_model):
         raise RuntimeError("Qwen3-TTS runtime unavailable: failed to load model")
 
-    audio = _generate_with_qwen(text=text, voice=voice)
+    audio = _generate_voice_design(text=text, instruct=instruct or "", language=resolved_language)
     if audio is not None:
         return audio
 
     if _ALLOW_FALLBACK:
         return _silent_wav(sample_rate=sample_rate)
 
-    raise RuntimeError("Qwen3-TTS synthesis failed")
+    raise RuntimeError("Qwen3-TTS VoiceDesign synthesis failed")
+
+
+def synthesize_custom_voice(text: str, speaker: str, language: str, sample_rate: int, model_id: str) -> bytes:
+    if not text.strip():
+        raise ValueError("text must not be empty")
+
+    resolved_mode = "custom_voice"
+    resolved_model = _resolve_model(resolved_mode, model_id)
+    resolved_language = language or DEFAULT_LANGUAGE
+
+    if not _ensure_loaded(mode=resolved_mode, model_id=resolved_model):
+        raise RuntimeError("Qwen3-TTS runtime unavailable: failed to load model")
+
+    audio = _generate_custom_voice(text=text, speaker=speaker or DEFAULT_SPEAKER, language=resolved_language)
+    if audio is not None:
+        return audio
+
+    if _ALLOW_FALLBACK:
+        return _silent_wav(sample_rate=sample_rate)
+
+    raise RuntimeError("Qwen3-TTS CustomVoice synthesis failed")

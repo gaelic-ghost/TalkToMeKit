@@ -1,10 +1,3 @@
-//
-//  TTMApi.swift
-//  TalkToMeKit
-//
-//  Created by Gale Williams on 2/22/26.
-//
-
 import Foundation
 import Logging
 import OpenAPIRuntime
@@ -31,7 +24,7 @@ struct TTMApi: APIProtocol {
 		_ = input
 		let payload = Components.Schemas.VersionResponse(
 			service: "TalkToMeKit",
-			apiVersion: "0.1.0",
+			apiVersion: "0.2.0",
 			openapiVersion: "3.1.0"
 		)
 		return .ok(.init(body: .json(payload)))
@@ -51,15 +44,14 @@ struct TTMApi: APIProtocol {
 
 	func adapterStatusAdaptersAdapterIdStatusGet(_ input: TTMOpenAPI.Operations.AdapterStatusAdaptersAdapterIdStatusGet.Input) async throws -> TTMOpenAPI.Operations.AdapterStatusAdaptersAdapterIdStatusGet.Output {
 		let status = await currentStatus()
+		let selection = currentSelection(from: status)
 		let payload = Components.Schemas.AdapterStatusResponse(
 			adapterId: input.path.adapterId,
-			modelId: "qwen3-tts",
+			mode: modelModeSchema(from: selection.mode),
+			modelId: modelIDSchema(from: selection.modelID),
 			loaded: status.modelLoaded,
 			loading: false,
-			soxAvailable: true,
 			qwenTtsAvailable: qwenService != nil,
-			idleUnloadSeconds: 0,
-			autoUnloadEnabled: false,
 			ready: status.ready,
 			detail: qwenStatusDetail(status: status)
 		)
@@ -69,14 +61,10 @@ struct TTMApi: APIProtocol {
 	func modelStatusModelStatusGet(_ input: TTMOpenAPI.Operations.ModelStatusModelStatusGet.Input) async throws -> TTMOpenAPI.Operations.ModelStatusModelStatusGet.Output {
 		_ = input
 		let status = await currentStatus()
-		let payload = Components.Schemas.ModelStatusResponse(
-			modelId: "qwen3-tts",
-			loaded: status.modelLoaded,
-			loading: false,
-			soxAvailable: true,
-			qwenTtsAvailable: qwenService != nil,
-			idleUnloadSeconds: 0,
-			autoUnloadEnabled: false,
+		let selection = currentSelection(from: status)
+		let payload = modelStatusResponse(
+			selection: selection,
+			modelLoaded: status.modelLoaded,
 			ready: status.ready,
 			detail: qwenStatusDetail(status: status)
 		)
@@ -84,16 +72,30 @@ struct TTMApi: APIProtocol {
 	}
 
 	func modelLoadModelLoadPost(_ input: TTMOpenAPI.Operations.ModelLoadModelLoadPost.Input) async throws -> TTMOpenAPI.Operations.ModelLoadModelLoadPost.Output {
-		_ = input
+		let request = modelLoadBody(from: input.body)
+		guard let mode = synthesisMode(from: request.mode) else {
+			return .badRequest
+		}
+		let requestedModel = request.modelId.flatMap(qwenModelIdentifier(from:))
+		if request.modelId != nil, requestedModel == nil {
+			return .badRequest
+		}
+		let selection = QwenModelSelection(mode: mode, modelID: requestedModel)
+		guard selection.modelID.mode == selection.mode else {
+			return .badRequest
+		}
+
 		guard let qwenService else {
-			let payload = unloadedModelStatusResponse(detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root")
+			let payload = unloadedModelStatusResponse(selection: selection, detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root")
 			return .accepted(.init(body: .json(payload)))
 		}
 
 		do {
-			let loaded = try await qwenService.loadModel()
+			let loaded = try await qwenService.loadModel(selection: selection)
 			let status = await qwenService.status()
+			let activeSelection = status.activeModelID.map { .init(mode: status.activeMode ?? $0.mode, modelID: $0) } ?? selection
 			let payload = modelStatusResponse(
+				selection: activeSelection,
 				modelLoaded: loaded,
 				ready: status.ready,
 				detail: qwenStatusDetail(status: status)
@@ -101,7 +103,8 @@ struct TTMApi: APIProtocol {
 			return loaded ? .ok(.init(body: .json(payload))) : .accepted(.init(body: .json(payload)))
 		} catch {
 			let status = await currentStatus()
-			let payload = unloadedModelStatusResponse(detail: qwenStatusDetail(status: status))
+			let fallbackSelection = currentSelection(from: status)
+			let payload = unloadedModelStatusResponse(selection: fallbackSelection, detail: qwenStatusDetail(status: status))
 			return .accepted(.init(body: .json(payload)))
 		}
 	}
@@ -109,7 +112,8 @@ struct TTMApi: APIProtocol {
 	func modelUnloadModelUnloadPost(_ input: TTMOpenAPI.Operations.ModelUnloadModelUnloadPost.Input) async throws -> TTMOpenAPI.Operations.ModelUnloadModelUnloadPost.Output {
 		_ = input
 		guard let qwenService else {
-			let payload = unloadedModelStatusResponse(detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root")
+			let selection = QwenModelSelection.defaultVoiceDesign
+			let payload = unloadedModelStatusResponse(selection: selection, detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root")
 			return .ok(.init(body: .json(payload)))
 		}
 
@@ -119,12 +123,13 @@ struct TTMApi: APIProtocol {
 			// Keep endpoint idempotent; report unloaded status either way.
 		}
 		let status = await currentStatus()
-		let payload = unloadedModelStatusResponse(detail: qwenStatusDetail(status: status))
+		let selection = currentSelection(from: status)
+		let payload = unloadedModelStatusResponse(selection: selection, detail: qwenStatusDetail(status: status))
 		return .ok(.init(body: .json(payload)))
 	}
 
-	func synthesizeSynthesizePost(_ input: TTMOpenAPI.Operations.SynthesizeSynthesizePost.Input) async throws -> TTMOpenAPI.Operations.SynthesizeSynthesizePost.Output {
-		let request = requestBody(from: input.body)
+	func synthesizeVoiceDesignSynthesizeVoiceDesignPost(_ input: TTMOpenAPI.Operations.SynthesizeVoiceDesignSynthesizeVoiceDesignPost.Input) async throws -> TTMOpenAPI.Operations.SynthesizeVoiceDesignSynthesizeVoiceDesignPost.Output {
+		let request = voiceDesignBody(from: input.body)
 		guard isSupportedAudioFormat(request.format) else {
 			return .badRequest
 		}
@@ -135,52 +140,30 @@ struct TTMApi: APIProtocol {
 			return .serviceUnavailable
 		}
 
-		let startedAt = Date()
-		let qwenRequest = makeQwenRequest(from: request)
-		logger.info(
-			"Starting synthesis request",
-			metadata: [
-				"textLength": "\(qwenRequest.text.count)",
-				"voice": "\(qwenRequest.voice ?? "")",
-				"timeoutSeconds": "\(Self.synthesisTimeoutSeconds)",
-			]
+		let modelID = request.modelId.flatMap(qwenModelIdentifier(from:)) ?? .voiceDesign1_7B
+		guard modelID.mode == .voiceDesign else {
+			return .badRequest
+		}
+		let qwenRequest = QwenSynthesisRequest.voiceDesign(
+			text: request.text,
+			instruct: request.instruct,
+			language: request.language,
+			modelID: modelID
 		)
 
 		do {
 			let wavBytes = try await synthesizeWithTimeout(request: qwenRequest, qwenService: qwenService)
-			let elapsed = Date().timeIntervalSince(startedAt)
-			logger.info(
-				"Synthesis request completed",
-				metadata: [
-					"elapsedMs": "\(Int((elapsed * 1_000).rounded()))",
-					"wavBytes": "\(wavBytes.count)",
-				]
-			)
 			let body = HTTPBody(wavBytes)
 			return .ok(.init(body: .audioWav(body)))
 		} catch is SynthesisTimeoutError {
-			logger.error(
-				"Synthesis request timed out",
-				metadata: [
-					"timeoutSeconds": "\(Self.synthesisTimeoutSeconds)",
-				]
-			)
 			return .serviceUnavailable
 		} catch {
-			let elapsed = Date().timeIntervalSince(startedAt)
-			logger.error(
-				"Synthesis request failed",
-				metadata: [
-					"elapsedMs": "\(Int((elapsed * 1_000).rounded()))",
-					"error": "\(String(describing: error))",
-				]
-			)
 			return .internalServerError
 		}
 	}
 
-	func synthesizeStreamSynthesizeStreamPost(_ input: TTMOpenAPI.Operations.SynthesizeStreamSynthesizeStreamPost.Input) async throws -> TTMOpenAPI.Operations.SynthesizeStreamSynthesizeStreamPost.Output {
-		let request = streamRequestBody(from: input.body)
+	func synthesizeCustomVoiceSynthesizeCustomVoicePost(_ input: TTMOpenAPI.Operations.SynthesizeCustomVoiceSynthesizeCustomVoicePost.Input) async throws -> TTMOpenAPI.Operations.SynthesizeCustomVoiceSynthesizeCustomVoicePost.Output {
+		let request = customVoiceBody(from: input.body)
 		guard isSupportedAudioFormat(request.format) else {
 			return .badRequest
 		}
@@ -191,81 +174,65 @@ struct TTMApi: APIProtocol {
 			return .serviceUnavailable
 		}
 
-		let startedAt = Date()
-		let qwenRequest = makeQwenRequest(from: request)
-		logger.info(
-			"Starting stream synthesis request",
-			metadata: [
-				"textLength": "\(qwenRequest.text.count)",
-				"voice": "\(qwenRequest.voice ?? "")",
-				"timeoutSeconds": "\(Self.synthesisTimeoutSeconds)",
-			]
+		let modelID = request.modelId.flatMap(qwenModelIdentifier(from:)) ?? .customVoice0_6B
+		guard modelID.mode == .customVoice else {
+			return .badRequest
+		}
+		let qwenRequest = QwenSynthesisRequest.customVoice(
+			text: request.text,
+			speaker: request.speaker,
+			language: request.language,
+			modelID: modelID
 		)
 
 		do {
 			let wavBytes = try await synthesizeWithTimeout(request: qwenRequest, qwenService: qwenService)
-			let elapsed = Date().timeIntervalSince(startedAt)
-			logger.info(
-				"Stream synthesis request completed",
-				metadata: [
-					"elapsedMs": "\(Int((elapsed * 1_000).rounded()))",
-					"wavBytes": "\(wavBytes.count)",
-				]
-			)
 			let body = HTTPBody(wavBytes)
 			return .ok(.init(body: .audioWav(body)))
 		} catch is SynthesisTimeoutError {
-			logger.error(
-				"Stream synthesis request timed out",
-				metadata: [
-					"timeoutSeconds": "\(Self.synthesisTimeoutSeconds)",
-				]
-			)
 			return .serviceUnavailable
 		} catch {
-			let elapsed = Date().timeIntervalSince(startedAt)
-			logger.error(
-				"Stream synthesis request failed",
-				metadata: [
-					"elapsedMs": "\(Int((elapsed * 1_000).rounded()))",
-					"error": "\(String(describing: error))",
-				]
-			)
 			return .internalServerError
 		}
 	}
 
-	private func requestBody(from body: TTMOpenAPI.Operations.SynthesizeSynthesizePost.Input.Body) -> Components.Schemas.SynthesizeRequest {
+	private func modelLoadBody(from body: TTMOpenAPI.Operations.ModelLoadModelLoadPost.Input.Body) -> Components.Schemas.ModelLoadRequest {
 		switch body {
 		case let .json(request):
 			return request
 		}
 	}
 
-	private func streamRequestBody(from body: TTMOpenAPI.Operations.SynthesizeStreamSynthesizeStreamPost.Input.Body) -> Components.Schemas.SynthesizeRequest {
+	private func voiceDesignBody(from body: TTMOpenAPI.Operations.SynthesizeVoiceDesignSynthesizeVoiceDesignPost.Input.Body) -> Components.Schemas.SynthesizeVoiceDesignRequest {
 		switch body {
 		case let .json(request):
 			return request
 		}
 	}
 
-	private func unloadedModelStatusResponse(detail: String) -> Components.Schemas.ModelStatusResponse {
-		modelStatusResponse(modelLoaded: false, ready: false, detail: detail)
+	private func customVoiceBody(from body: TTMOpenAPI.Operations.SynthesizeCustomVoiceSynthesizeCustomVoicePost.Input.Body) -> Components.Schemas.SynthesizeCustomVoiceRequest {
+		switch body {
+		case let .json(request):
+			return request
+		}
+	}
+
+	private func unloadedModelStatusResponse(selection: QwenModelSelection, detail: String) -> Components.Schemas.ModelStatusResponse {
+		modelStatusResponse(selection: selection, modelLoaded: false, ready: false, detail: detail)
 	}
 
 	private func modelStatusResponse(
+		selection: QwenModelSelection,
 		modelLoaded: Bool,
 		ready: Bool,
 		detail: String
 	) -> Components.Schemas.ModelStatusResponse {
 		.init(
-			modelId: "qwen3-tts",
+			mode: modelModeSchema(from: selection.mode),
+			modelId: modelIDSchema(from: selection.modelID),
 			loaded: modelLoaded,
 			loading: false,
-			soxAvailable: true,
 			qwenTtsAvailable: qwenService != nil,
-			idleUnloadSeconds: 0,
-			autoUnloadEnabled: false,
 			ready: ready,
 			detail: detail
 		)
@@ -279,24 +246,26 @@ struct TTMApi: APIProtocol {
 		return normalized == "wav" || normalized == "audio/wav"
 	}
 
-	private func makeQwenRequest(from request: Components.Schemas.SynthesizeRequest) -> QwenSynthesisRequest {
-		.init(
-			text: request.text,
-			voice: request.instruct ?? request.language
-		)
-	}
-
 	private func currentStatus() async -> TTMPythonBridgeStatus {
 		guard let qwenService else {
 			return .init(
 				runtimeInitialized: false,
 				moduleLoaded: false,
 				modelLoaded: false,
+				activeMode: nil,
+				activeModelID: nil,
 				ready: false,
 				lastError: nil
 			)
 		}
 		return await qwenService.status()
+	}
+
+	private func currentSelection(from status: TTMPythonBridgeStatus) -> QwenModelSelection {
+		if let activeModel = status.activeModelID {
+			return .init(mode: status.activeMode ?? activeModel.mode, modelID: activeModel)
+		}
+		return .defaultVoiceDesign
 	}
 
 	private func qwenStatusDetail(status: TTMPythonBridgeStatus) -> String {
@@ -319,6 +288,46 @@ struct TTMApi: APIProtocol {
 			return "Qwen3-TTS service is running; model not loaded"
 		}
 		return "Qwen3-TTS service is starting or unavailable"
+	}
+
+	private func modelModeSchema(from mode: QwenSynthesisMode) -> Components.Schemas.ModelMode {
+		switch mode {
+		case .voiceDesign:
+			return .voiceDesign
+		case .customVoice:
+			return .customVoice
+		}
+	}
+
+	private func modelIDSchema(from modelID: QwenModelIdentifier) -> Components.Schemas.ModelId {
+		switch modelID {
+		case .voiceDesign1_7B:
+			return .qwenQwen3TTS12Hz1_7BVoiceDesign
+		case .customVoice0_6B:
+			return .qwenQwen3TTS12Hz0_6BCustomVoice
+		case .customVoice1_7B:
+			return .qwenQwen3TTS12Hz1_7BCustomVoice
+		}
+	}
+
+	private func synthesisMode(from mode: Components.Schemas.ModelMode) -> QwenSynthesisMode? {
+		switch mode {
+		case .voiceDesign:
+			return .voiceDesign
+		case .customVoice:
+			return .customVoice
+		}
+	}
+
+	private func qwenModelIdentifier(from modelID: Components.Schemas.ModelId) -> QwenModelIdentifier? {
+		switch modelID {
+		case .qwenQwen3TTS12Hz1_7BVoiceDesign:
+			return .voiceDesign1_7B
+		case .qwenQwen3TTS12Hz0_6BCustomVoice:
+			return .customVoice0_6B
+		case .qwenQwen3TTS12Hz1_7BCustomVoice:
+			return .customVoice1_7B
+		}
 	}
 
 	private func synthesizeWithTimeout(

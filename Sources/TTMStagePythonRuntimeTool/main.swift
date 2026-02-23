@@ -34,15 +34,30 @@ struct TTMStagePythonRuntimeTool {
 	}
 
 	private static func resolveArguments(_ arguments: [String]) throws -> [String] {
-		guard arguments.contains("--install-qwen") else {
-			return arguments
+		let normalized = arguments.filter { $0 != "--allow-network" }
+		guard normalized.contains("--restage") else {
+			guard normalized.contains("--install-qwen") else {
+				return normalized
+			}
+
+			guard arguments.contains("--allow-network") else {
+				throw ToolError.networkFlagRequired
+			}
+
+			return normalized
 		}
 
-		guard arguments.contains("--allow-network") else {
-			throw ToolError.networkFlagRequired
+		var restageArgs = [
+			"--restage",
+			"--install-qwen",
+			"--installer", "uv",
+			"--python", "python3.11",
+		]
+		if !normalized.contains("--include-cv-1.7b") {
+			restageArgs.append("--include-cv-1.7b")
 		}
-
-		return arguments.filter { $0 != "--allow-network" }
+		restageArgs.append(contentsOf: normalized.filter { $0 != "--restage" })
+		return restageArgs
 	}
 }
 

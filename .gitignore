@@ -13,3 +13,4 @@ Sources/TTMPythonRuntimeBundle/Resources/Runtime/current/
 # Generated Python bytecode
 __pycache__/
 *.pyc
+.codex/

@@ -31,13 +31,114 @@ public struct PythonRuntimeConfiguration: Sendable {
 
 public struct QwenSynthesisRequest: Sendable {
 	public var text: String
-	public var voice: String?
+	public var mode: QwenSynthesisMode
+	public var modelID: QwenModelIdentifier
+	public var language: String
+	public var voice: String
 	public var sampleRate: Int
 
-	public init(text: String, voice: String? = nil, sampleRate: Int = 24_000) {
+	public init(
+		text: String,
+		mode: QwenSynthesisMode,
+		modelID: QwenModelIdentifier,
+		language: String,
+		voice: String,
+		sampleRate: Int = 24_000
+	) {
 		self.text = text
+		self.mode = mode
+		self.modelID = modelID
+		self.language = language
 		self.voice = voice
 		self.sampleRate = sampleRate
+	}
+
+	public static func voiceDesign(
+		text: String,
+		instruct: String,
+		language: String,
+		modelID: QwenModelIdentifier = .voiceDesign1_7B,
+		sampleRate: Int = 24_000
+	) -> Self {
+		.init(
+			text: text,
+			mode: .voiceDesign,
+			modelID: modelID,
+			language: language,
+			voice: instruct,
+			sampleRate: sampleRate
+		)
+	}
+
+	public static func customVoice(
+		text: String,
+		speaker: String,
+		language: String,
+		modelID: QwenModelIdentifier = .customVoice0_6B,
+		sampleRate: Int = 24_000
+	) -> Self {
+		.init(
+			text: text,
+			mode: .customVoice,
+			modelID: modelID,
+			language: language,
+			voice: speaker,
+			sampleRate: sampleRate
+		)
+	}
+}
+
+public enum QwenSynthesisMode: String, CaseIterable, Sendable {
+	case voiceDesign = "voice_design"
+	case customVoice = "custom_voice"
+}
+
+public enum QwenModelIdentifier: String, CaseIterable, Sendable {
+	case voiceDesign1_7B = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+	case customVoice0_6B = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+	case customVoice1_7B = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+	public var mode: QwenSynthesisMode {
+		switch self {
+		case .voiceDesign1_7B:
+			return .voiceDesign
+		case .customVoice0_6B, .customVoice1_7B:
+			return .customVoice
+		}
+	}
+
+	public static func defaultModel(for mode: QwenSynthesisMode) -> Self {
+		switch mode {
+		case .voiceDesign:
+			return .voiceDesign1_7B
+		case .customVoice:
+			return .customVoice0_6B
+		}
+	}
+
+	public static func fallbackOrder(for preferred: Self) -> [Self] {
+		let sameMode = Self.allCases.filter { $0.mode == preferred.mode && $0 != preferred }
+		let crossMode = Self.allCases.filter { $0.mode != preferred.mode }
+		return [preferred] + sameMode + crossMode
+	}
+}
+
+public struct QwenModelSelection: Sendable, Equatable {
+	public var mode: QwenSynthesisMode
+	public var modelID: QwenModelIdentifier
+
+	public init(mode: QwenSynthesisMode, modelID: QwenModelIdentifier? = nil) {
+		let resolvedModel = modelID ?? QwenModelIdentifier.defaultModel(for: mode)
+		self.mode = mode
+		self.modelID = resolvedModel
+	}
+
+	public static var defaultVoiceDesign: Self {
+		.init(mode: .voiceDesign, modelID: .voiceDesign1_7B)
+	}
+
+	public static var defaultCustomVoice: Self {
+		.init(mode: .customVoice, modelID: .customVoice0_6B)
 	}
 }
 
@@ -45,6 +146,8 @@ public struct TTMPythonBridgeStatus: Sendable, Equatable {
 	public var runtimeInitialized: Bool
 	public var moduleLoaded: Bool
 	public var modelLoaded: Bool
+	public var activeMode: QwenSynthesisMode?
+	public var activeModelID: QwenModelIdentifier?
 	public var ready: Bool
 	public var lastError: String?
 
@@ -52,12 +155,16 @@ public struct TTMPythonBridgeStatus: Sendable, Equatable {
 		runtimeInitialized: Bool,
 		moduleLoaded: Bool,
 		modelLoaded: Bool,
+		activeMode: QwenSynthesisMode?,
+		activeModelID: QwenModelIdentifier?,
 		ready: Bool,
 		lastError: String?
 	) {
 		self.runtimeInitialized = runtimeInitialized
 		self.moduleLoaded = moduleLoaded
 		self.modelLoaded = modelLoaded
+		self.activeMode = activeMode
+		self.activeModelID = activeModelID
 		self.ready = ready
 		self.lastError = lastError
 	}
@@ -82,6 +189,7 @@ public actor TTMPythonBridge {
 	private var configuration: PythonRuntimeConfiguration?
 	private var qwenModuleLoaded = false
 	private var modelLoaded = false
+	private var activeSelection: QwenModelSelection?
 	private var lastError: String?
 	private let pythonExecutionQueue = DispatchQueue(label: "TalkToMeKit.TTMPythonBridge.CPython")
 
@@ -96,6 +204,8 @@ public actor TTMPythonBridge {
 			runtimeInitialized: runtime != nil,
 			moduleLoaded: qwenModuleLoaded,
 			modelLoaded: modelLoaded,
+			activeMode: activeSelection?.mode,
+			activeModelID: activeSelection?.modelID,
 			ready: isReady,
 			lastError: lastError
 		)
@@ -115,6 +225,7 @@ public actor TTMPythonBridge {
 			self.configuration = configuration
 			qwenModuleLoaded = false
 			modelLoaded = false
+			activeSelection = nil
 			lastError = nil
 		} catch {
 			lastError = String(describing: error)
@@ -147,8 +258,12 @@ public actor TTMPythonBridge {
 		guard qwenModuleLoaded else {
 			throw TTMPythonBridgeError.qwenModuleNotLoaded
 		}
-		guard modelLoaded else {
-			throw TTMPythonBridgeError.modelNotLoaded
+		let requestedSelection = QwenModelSelection(mode: request.mode, modelID: request.modelID)
+		if activeSelection != requestedSelection || !modelLoaded {
+			let loaded = try await loadModel(selection: requestedSelection)
+			guard loaded else {
+				throw TTMPythonBridgeError.modelNotLoaded
+			}
 		}
 
 		do {
@@ -167,27 +282,43 @@ public actor TTMPythonBridge {
 		modelLoaded
 	}
 
-	public func loadModel() async throws -> Bool {
+	public func loadModel(selection: QwenModelSelection) async throws -> Bool {
 		guard let runtime, let configuration else {
 			throw TTMPythonBridgeError.notInitialized
 		}
 		guard qwenModuleLoaded else {
 			throw TTMPythonBridgeError.qwenModuleNotLoaded
 		}
-		do {
-			let loaded = try await blockingCall {
-				try runtime.callBooleanFunction(
-					moduleName: configuration.qwenModule,
-					functionName: "load_model"
-				)
+		let orderedSelections = QwenModelIdentifier
+			.fallbackOrder(for: selection.modelID)
+			.map { QwenModelSelection(mode: $0.mode, modelID: $0) }
+
+		for candidate in orderedSelections {
+			guard candidate.modelID.mode == candidate.mode else {
+				continue
 			}
-			modelLoaded = loaded
-			lastError = loaded ? nil : "load_model returned false"
-			return loaded
-		} catch {
-			lastError = String(describing: error)
-			throw error
+			do {
+				let loaded = try await blockingCall {
+					try runtime.callBooleanFunction(
+						moduleName: configuration.qwenModule,
+						functionName: "load_model",
+						stringArguments: [candidate.mode.rawValue, candidate.modelID.rawValue]
+					)
+				}
+				if loaded {
+					modelLoaded = true
+					activeSelection = candidate
+					lastError = nil
+					return true
+				}
+				lastError = "load_model returned false for \(candidate.modelID.rawValue)"
+			} catch {
+				lastError = String(describing: error)
+			}
 		}
+		modelLoaded = false
+		activeSelection = nil
+		return false
 	}
 
 	public func unloadModel() async throws -> Bool {
@@ -205,6 +336,7 @@ public actor TTMPythonBridge {
 				)
 			}
 			modelLoaded = !unloaded
+			activeSelection = unloaded ? nil : activeSelection
 			lastError = nil
 			return unloaded
 		} catch {
@@ -219,6 +351,7 @@ public actor TTMPythonBridge {
 		configuration = nil
 		qwenModuleLoaded = false
 		modelLoaded = false
+		activeSelection = nil
 		lastError = nil
 	}
 
@@ -351,57 +484,81 @@ private final class CPythonRuntime: @unchecked Sendable {
 		}
 		defer { pyDecRef(module) }
 
-		let synthFn = "synthesize".withCString { pyObjectGetAttrString(module, $0) }
+		let functionName: String
+		switch request.mode {
+		case .voiceDesign:
+			functionName = "synthesize_voice_design"
+		case .customVoice:
+			functionName = "synthesize_custom_voice"
+		}
+		let synthFn = functionName.withCString { pyObjectGetAttrString(module, $0) }
 		guard let synthFn else {
 			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 		defer { pyDecRef(synthFn) }
 
 		guard pyCallableCheck(synthFn) != 0 else {
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 
-		guard let args = pyTupleNew(3) else {
+		guard let args = pyTupleNew(5) else {
 			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 		defer { pyDecRef(args) }
 
 		guard let textObject = request.text.withCString({ pyUnicodeFromString($0) }) else {
 			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
-		let voiceValue = request.voice ?? ""
-		guard let voiceObject = voiceValue.withCString({ pyUnicodeFromString($0) }) else {
+		guard let voiceObject = request.voice.withCString({ pyUnicodeFromString($0) }) else {
 			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+		guard let languageObject = request.language.withCString({ pyUnicodeFromString($0) }) else {
+			pyErrPrintEx(0)
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 		guard let sampleRateObject = pyLongFromLong(request.sampleRate) else {
 			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+		guard let modelObject = request.modelID.rawValue.withCString({ pyUnicodeFromString($0) }) else {
+			pyErrPrintEx(0)
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 
 		// PyTuple_SetItem steals references on success.
 		guard pyTupleSetItem(args, 0, textObject) == 0 else {
 			pyErrPrintEx(0)
 			pyDecRef(textObject)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 		guard pyTupleSetItem(args, 1, voiceObject) == 0 else {
 			pyErrPrintEx(0)
 			pyDecRef(voiceObject)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
-		guard pyTupleSetItem(args, 2, sampleRateObject) == 0 else {
+		guard pyTupleSetItem(args, 2, languageObject) == 0 else {
+			pyErrPrintEx(0)
+			pyDecRef(languageObject)
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+		guard pyTupleSetItem(args, 3, sampleRateObject) == 0 else {
 			pyErrPrintEx(0)
 			pyDecRef(sampleRateObject)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+		guard pyTupleSetItem(args, 4, modelObject) == 0 else {
+			pyErrPrintEx(0)
+			pyDecRef(modelObject)
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 
 		guard let result = pyObjectCallObject(synthFn, args) else {
 			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: "synthesize")
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 		defer { pyDecRef(result) }
 
@@ -418,7 +575,7 @@ private final class CPythonRuntime: @unchecked Sendable {
 		return Data(bytes: buffer, count: byteCount)
 	}
 
-	func callBooleanFunction(moduleName: String, functionName: String) throws -> Bool {
+	func callBooleanFunction(moduleName: String, functionName: String, stringArguments: [String] = []) throws -> Bool {
 		let state = pyGILStateEnsure()
 		defer { pyGILStateRelease(state) }
 
@@ -440,7 +597,34 @@ private final class CPythonRuntime: @unchecked Sendable {
 			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 
-		guard let result = pyObjectCallObject(function, nil) else {
+		var args: PyObject?
+		if !stringArguments.isEmpty {
+			guard let tuple = pyTupleNew(stringArguments.count) else {
+				pyErrPrintEx(0)
+				throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+			}
+			for (index, argument) in stringArguments.enumerated() {
+				guard let argObject = argument.withCString({ pyUnicodeFromString($0) }) else {
+					pyErrPrintEx(0)
+					pyDecRef(tuple)
+					throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+				}
+				guard pyTupleSetItem(tuple, index, argObject) == 0 else {
+					pyErrPrintEx(0)
+					pyDecRef(argObject)
+					pyDecRef(tuple)
+					throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+				}
+			}
+			args = tuple
+		}
+		defer {
+			if let args {
+				pyDecRef(args)
+			}
+		}
+
+		guard let result = pyObjectCallObject(function, args) else {
 			pyErrPrintEx(0)
 			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}

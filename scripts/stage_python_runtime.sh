@@ -13,7 +13,9 @@ Options:
   --installer NAME        Package installer to use: auto|uv|pip (default: auto)
   --runtime-root PATH     Destination runtime root
                           (default: Sources/TTMPythonRuntimeBundle/Resources/Runtime/current)
-  --model-id ID           Qwen model id pre-download hint (default: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)
+  --restage               Remove existing runtime root before staging
+  --model-id ID           Additional Qwen model id to pre-download (repeatable)
+  --include-cv-1.7b       Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
   --install-qwen          Install qwen-tts and dependencies into the runtime environment (default)
   --no-install-qwen       Skip package installation; stage from current environment only
   --help                  Show this help
@@ -23,8 +25,14 @@ USAGE
 PYTHON_BIN="python3"
 INSTALLER="auto"
 RUNTIME_ROOT="Sources/TTMPythonRuntimeBundle/Resources/Runtime/current"
-MODEL_ID="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+MODEL_IDS=()
+DEFAULT_MODELS=(
+  "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+  "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+)
+INCLUDE_CV_17B="0"
 INSTALL_QWEN="1"
+RESTAGE="0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REQUIREMENTS_FILE="$SCRIPT_DIR/requirements-qwen.txt"
 
@@ -42,9 +50,17 @@ while [[ $# -gt 0 ]]; do
       RUNTIME_ROOT="$2"
       shift 2
       ;;
+    --restage)
+      RESTAGE="1"
+      shift
+      ;;
     --model-id)
-      MODEL_ID="$2"
+      MODEL_IDS+=("$2")
       shift 2
+      ;;
+    --include-cv-1.7b)
+      INCLUDE_CV_17B="1"
+      shift
       ;;
     --install-qwen)
       INSTALL_QWEN="1"
@@ -69,6 +85,10 @@ done
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   echo "Python interpreter not found: $PYTHON_BIN" >&2
   exit 1
+fi
+
+if [[ "$RESTAGE" == "1" ]]; then
+  rm -rf "$RUNTIME_ROOT"
 fi
 
 WORK_DIR="$(mktemp -d)"
@@ -194,8 +214,17 @@ cp -R "$PURELIB_DIR/." "$SITE_PACKAGES_DEST/"
 
 if [[ "$INSTALL_QWEN" == "1" ]]; then
   mkdir -p "$RUNTIME_ROOT/models"
+  DOWNLOAD_MODELS=("${DEFAULT_MODELS[@]}")
+  if [[ "$INCLUDE_CV_17B" == "1" ]]; then
+    DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+  fi
+  if [[ "${#MODEL_IDS[@]}" -gt 0 ]]; then
+    DOWNLOAD_MODELS+=("${MODEL_IDS[@]}")
+  fi
   if command -v huggingface-cli >/dev/null 2>&1; then
-    HF_HUB_DISABLE_XET=1 huggingface-cli download "$MODEL_ID" --local-dir "$RUNTIME_ROOT/models/$(basename "$MODEL_ID")" || true
+    for model_id in "${DOWNLOAD_MODELS[@]}"; do
+      HF_HUB_DISABLE_XET=1 huggingface-cli download "$model_id" --local-dir "$RUNTIME_ROOT/models/$(basename "$model_id")" || true
+    done
   fi
 fi
 

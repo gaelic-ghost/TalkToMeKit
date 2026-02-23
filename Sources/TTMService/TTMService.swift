@@ -20,11 +20,24 @@ public enum TTMAssetPreparationState: Sendable, Equatable {
 public struct TTMServiceSynthesizeRequest: Sendable {
 	public var text: String
 	public var voice: String?
+	public var mode: QwenSynthesisMode
+	public var modelID: QwenModelIdentifier?
+	public var language: String
 	public var sampleRate: Int
 
-	public init(text: String, voice: String? = nil, sampleRate: Int = 24_000) {
+	public init(
+		text: String,
+		voice: String? = nil,
+		mode: QwenSynthesisMode = .customVoice,
+		modelID: QwenModelIdentifier? = nil,
+		language: String = "English",
+		sampleRate: Int = 24_000
+	) {
 		self.text = text
 		self.voice = voice
+		self.mode = mode
+		self.modelID = modelID
+		self.language = language
 		self.sampleRate = sampleRate
 	}
 }
@@ -245,9 +258,28 @@ public actor TTMServiceRuntime {
 			throw TTMServiceRuntimeError.notReady
 		}
 
-		return try await service.synthesize(
-			.init(text: request.text, voice: request.voice, sampleRate: request.sampleRate)
-		)
+		let resolvedModelID = request.modelID ?? QwenModelIdentifier.defaultModel(for: request.mode)
+		let qwenRequest: QwenSynthesisRequest
+		switch request.mode {
+		case .voiceDesign:
+			qwenRequest = .voiceDesign(
+				text: request.text,
+				instruct: request.voice ?? "",
+				language: request.language,
+				modelID: resolvedModelID,
+				sampleRate: request.sampleRate
+			)
+		case .customVoice:
+			qwenRequest = .customVoice(
+				text: request.text,
+				speaker: request.voice ?? "ryan",
+				language: request.language,
+				modelID: resolvedModelID,
+				sampleRate: request.sampleRate
+			)
+		}
+
+		return try await service.synthesize(qwenRequest)
 	}
 
 	private func waitForReady(service: TTMQwenService, timeoutSeconds: Int) async throws {
