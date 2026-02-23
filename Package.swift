@@ -17,6 +17,10 @@ let package = Package(
 	        name: "TalkToMeService",
 	        targets: [ "TTMService" ]
 	    ),
+	    .library(
+	        name: "TTMPythonBridge",
+	        targets: [ "TTMPythonBridge" ]
+	    ),
 	    .executable(
 	        name: "ttm-cli",
 	        targets: [ "TTMCli" ]
@@ -64,9 +68,6 @@ let package = Package(
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]
 		),
-		.executableTarget(
-			name: "TTMStagePythonRuntimeTool"
-		),
 		.target(
 			name: "TTMPythonBridge",
 			resources: [
@@ -110,10 +111,7 @@ let package = Package(
 					),
 					.writeToPackageDirectory(reason: "Stage runtime assets under Sources/TTMPythonRuntimeBundle/Resources/Runtime/current."),
 				]
-			),
-			dependencies: [
-				.target(name: "TTMStagePythonRuntimeTool"),
-			]
+			)
 		),
     ]
 )
