@@ -9,14 +9,17 @@ Usage:
   scripts/stage_python_runtime.sh [options]
 
 Options:
-  --python PATH           Python interpreter to use (default: python3)
+  -py PATH, --python PATH Python interpreter to use (default: python3)
+  -uv                     Use uv installer (default installer mode is auto)
   --installer NAME        Package installer to use: auto|uv|pip (default: auto)
   --runtime-root PATH     Destination runtime root
                           (default: Sources/TTMPythonRuntimeBundle/Resources/Runtime/current)
   --restage               Remove existing runtime root before staging
   --model-id ID           Additional Qwen model id to pre-download (repeatable)
-  --include-cv-1.7b       Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
-  --include-base-1.7b     Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-Base
+  --bigcv                 Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+  --bigvd                 Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
+  --bigvc                 Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-Base
+  --noload                Skip downloading model files
   --install-qwen          Install qwen-tts and dependencies into the runtime environment (default)
   --no-install-qwen       Skip package installation; stage from current environment only
   --help                  Show this help
@@ -28,28 +31,43 @@ INSTALLER="auto"
 RUNTIME_ROOT="Sources/TTMPythonRuntimeBundle/Resources/Runtime/current"
 MODEL_IDS=()
 DEFAULT_MODELS=(
-  "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
   "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
   "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 )
-INCLUDE_CV_17B="0"
-INCLUDE_BASE_17B="0"
+BIG_CV="0"
+BIG_VD="0"
+BIG_VC="0"
+NO_LOAD="0"
 INSTALL_QWEN="1"
 RESTAGE="0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REQUIREMENTS_FILE="$SCRIPT_DIR/requirements-qwen.txt"
 
+require_value() {
+  if [[ $# -lt 2 ]]; then
+    echo "Missing value for option: $1" >&2
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --python)
+    -py|--python)
+      require_value "$@"
       PYTHON_BIN="$2"
       shift 2
       ;;
+    -uv)
+      INSTALLER="uv"
+      shift
+      ;;
     --installer)
+      require_value "$@"
       INSTALLER="$2"
       shift 2
       ;;
     --runtime-root)
+      require_value "$@"
       RUNTIME_ROOT="$2"
       shift 2
       ;;
@@ -58,15 +76,24 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --model-id)
+      require_value "$@"
       MODEL_IDS+=("$2")
       shift 2
       ;;
-    --include-cv-1.7b)
-      INCLUDE_CV_17B="1"
+    --bigcv|--include-cv-1.7b)
+      BIG_CV="1"
       shift
       ;;
-    --include-base-1.7b)
-      INCLUDE_BASE_17B="1"
+    --bigvd)
+      BIG_VD="1"
+      shift
+      ;;
+    --bigvc|--include-base-1.7b)
+      BIG_VC="1"
+      shift
+      ;;
+    --noload)
+      NO_LOAD="1"
       shift
       ;;
     --install-qwen)
@@ -221,20 +248,25 @@ cp -R "$PURELIB_DIR/." "$SITE_PACKAGES_DEST/"
 
 if [[ "$INSTALL_QWEN" == "1" ]]; then
   mkdir -p "$RUNTIME_ROOT/models"
-  DOWNLOAD_MODELS=("${DEFAULT_MODELS[@]}")
-  if [[ "$INCLUDE_CV_17B" == "1" ]]; then
-    DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
-  fi
-  if [[ "$INCLUDE_BASE_17B" == "1" ]]; then
-    DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-Base")
-  fi
-  if [[ "${#MODEL_IDS[@]}" -gt 0 ]]; then
-    DOWNLOAD_MODELS+=("${MODEL_IDS[@]}")
-  fi
-  if command -v huggingface-cli >/dev/null 2>&1; then
-    for model_id in "${DOWNLOAD_MODELS[@]}"; do
-      HF_HUB_DISABLE_XET=1 huggingface-cli download "$model_id" --local-dir "$RUNTIME_ROOT/models/$(basename "$model_id")" || true
-    done
+  if [[ "$NO_LOAD" != "1" ]]; then
+    DOWNLOAD_MODELS=("${DEFAULT_MODELS[@]}")
+    if [[ "$BIG_CV" == "1" ]]; then
+      DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    fi
+    if [[ "$BIG_VD" == "1" ]]; then
+      DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
+    fi
+    if [[ "$BIG_VC" == "1" ]]; then
+      DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+    fi
+    if [[ "${#MODEL_IDS[@]}" -gt 0 ]]; then
+      DOWNLOAD_MODELS+=("${MODEL_IDS[@]}")
+    fi
+    if command -v huggingface-cli >/dev/null 2>&1; then
+      for model_id in "${DOWNLOAD_MODELS[@]}"; do
+        HF_HUB_DISABLE_XET=1 huggingface-cli download "$model_id" --local-dir "$RUNTIME_ROOT/models/$(basename "$model_id")" || true
+      done
+    fi
   fi
 fi
 

@@ -29,25 +29,26 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 Use the SwiftPM command plugin for all normal workflows:
 
 ```bash
-# Safe default (runtime only, no Qwen install)
+# Default: install deps + download small models (0.6B CV + 0.6B VC)
 swift package plugin --allow-network-connections all stage-python-runtime
 
-# Install Qwen deps/models (requires explicit network intent)
-swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --python python3.11
-
-# Same as above, but force uv installer
-swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --installer uv --python python3.11
+# Force uv installer and explicit python
+swift package plugin --allow-network-connections all stage-python-runtime -- -uv -py python3.11
 
 # Full restage (wipe Runtime/current, reinstall deps, redownload default models)
 swift package plugin --allow-network-connections all stage-python-runtime -- --restage
-```
 
-Add `--include-cv-1.7b` and/or `--include-base-1.7b` with `--restage` when needed.
+# Install deps only (skip model downloads)
+swift package plugin --allow-network-connections all stage-python-runtime -- --noload
+
+# Also include large 1.7B models
+swift package plugin --allow-network-connections all stage-python-runtime -- --bigcv --bigvd --bigvc
+```
 
 Direct script usage is still available for local debugging:
 
 ```bash
-./scripts/stage_python_runtime.sh --python python3.11 --no-install-qwen
+./scripts/stage_python_runtime.sh -py python3.11 -uv --noload
 ```
 
 Dependency pinning:
@@ -137,7 +138,7 @@ Use this when embedding `TalkToMeService` into a macOS app target.
 
 ```bash
 cd <path-to-TalkToMeKit>
-swift package plugin --allow-writing-to-package-directory --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --installer uv --python python3.11
+swift package plugin --allow-writing-to-package-directory --allow-network-connections all stage-python-runtime -- -uv -py python3.11
 ```
 
 4. Add a Run Script build phase to the app target (before app code signing), using:
