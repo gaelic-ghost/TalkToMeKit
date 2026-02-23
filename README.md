@@ -26,45 +26,25 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 
 ## Stage bundled runtime
 
-Preferred: use the SwiftPM command plugin.
-
-Stage runtime only (safe default):
+Use the SwiftPM command plugin for all normal workflows:
 
 ```bash
+# Safe default (runtime only, no Qwen install)
 swift package plugin --allow-network-connections all stage-python-runtime
-```
 
-Stage runtime only with explicit python:
-
-```bash
-swift package plugin --allow-network-connections all stage-python-runtime -- --python python3.11 --no-install-qwen
-```
-
-Stage runtime + install Qwen deps + download model (network-enabled):
-
-```bash
+# Install Qwen deps/models (requires explicit network intent)
 swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --python python3.11
-```
 
-Stage runtime + install Qwen deps using `uv` explicitly:
-
-```bash
+# Same as above, but force uv installer
 swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --installer uv --python python3.11
-```
 
-Restage runtime (wipe existing `Runtime/current`, reinstall deps, and download VD 1.7B + CV 0.6B + Base 0.6B defaults):
-
-```bash
+# Full restage (wipe Runtime/current, reinstall deps, redownload default models)
 swift package plugin --allow-network-connections all stage-python-runtime -- --restage
 ```
 
-Include optional 1.7B variants when needed:
+Add `--include-cv-1.7b` and/or `--include-base-1.7b` with `--restage` when needed.
 
-```bash
-swift package plugin --allow-network-connections all stage-python-runtime -- --restage --include-cv-1.7b --include-base-1.7b
-```
-
-Direct script usage is still available:
+Direct script usage is still available for local debugging:
 
 ```bash
 ./scripts/stage_python_runtime.sh --python python3.11 --no-install-qwen
@@ -81,8 +61,7 @@ Staged location:
 Note:
 
 - `Runtime/current` is intentionally git-ignored and not committed.
-- Each developer/CI environment should stage it locally with
-  `swift package plugin stage-python-runtime`.
+- Each developer/CI environment should stage it locally before running server/app code.
 
 ## Run server with bundled runtime
 
