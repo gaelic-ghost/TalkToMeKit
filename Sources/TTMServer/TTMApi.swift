@@ -9,6 +9,8 @@ import TTMOpenAPI
 
 // TODO: Impl API based off of generated from swift-openapi-hummingbird and swift-openapi-generator
 
-//struct TTMApi: APIProtocol {
-//	
-//}
+struct TTMApi: APIProtocol {
+	func healthHealthGet(_ input: TTMOpenAPI.Operations.HealthHealthGet.Input) async throws -> TTMOpenAPI.Operations.HealthHealthGet.Output {
+		<#code#>
+	}
+}

@@ -17,6 +17,10 @@ let package = Package(
 	        name: "TalkToMeService",
 	        targets: [ "TTMService" ]
 	    ),
+	    .executable(
+	        name: "ttm-cli",
+	        targets: [ "TTMCli" ]
+	    ),
 	],
     dependencies: [
 		.package(url: "https://github.com/apple/swift-openapi-generator.git", from: "1.10.0"),
@@ -24,6 +28,7 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
         .package(url: "https://github.com/hummingbird-project/swift-openapi-hummingbird.git", from: "2.0.0"),
 		.package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.10.0"),
+		.package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.7.0"),
     ],
     targets: [
 		.target(
@@ -40,6 +45,7 @@ let package = Package(
 			dependencies: [
 				.product(name: "Hummingbird", package: "hummingbird"),
 				.product(name: "OpenAPIHummingbird", package: "swift-openapi-hummingbird"),
+				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 				.target(name: "TTMOpenAPI"),
 				.target(name: "TTMService"),
 			]
@@ -48,6 +54,12 @@ let package = Package(
 			name: "TTMService",
 			dependencies: [
 				.product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+			]
+		),
+		.executableTarget(
+			name: "TTMCli",
+			dependencies: [
+				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]
 		),
     ]
