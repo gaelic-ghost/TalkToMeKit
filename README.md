@@ -201,6 +201,38 @@ Notes:
 - The staging script now installs `static-sox` as fallback and stages `sox` into `Runtime/current/bin` when available.
 - Prepend `Runtime/current/bin` to `PATH` before `runtime.start()` so `qwen-tts` can find bundled `sox`.
 
+### Runtime request options in app code
+
+Use per-request mode, model, voice/speaker, and language:
+
+```swift
+import TTMService
+import TTMPythonBridge
+
+let wav = try await runtime.synthesize(
+	.init(
+		text: "Hello from app",
+		voice: "ryan", // speaker for custom_voice, instruction for voice_design
+		mode: .customVoice, // or .voiceDesign
+		modelID: .customVoice0_6B, // or .customVoice1_7B / .voiceDesign1_7B
+		language: "English"
+	)
+)
+```
+
+Defaults:
+- VoiceDesign default model: `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
+- CustomVoice default model: `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
+- CustomVoice default speaker (when `voice` is omitted): `ryan`
+
+### Example app reference
+
+`TalkToMeKitExampleApp` demonstrates the full embedding workflow, including:
+- local package linking to `TalkToMeKit`
+- runtime staging/copy/sign build phase
+- mode/model/language controls in SwiftUI
+- `TTMServiceRuntime` local runtime startup and synthesis calls
+
 ## Quick API smoke test
 
 ```bash
