@@ -5,6 +5,9 @@ import PackageDescription
 
 let package = Package(
     name: "TalkToMeKit",
+	platforms: [
+		.macOS(.v15),
+	],
 	products: [
 		.executable(
 			name: "TalkToMeServer",

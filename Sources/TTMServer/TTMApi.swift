@@ -8,3 +8,7 @@
 import TTMOpenAPI
 
 // TODO: Impl API based off of generated from swift-openapi-hummingbird and swift-openapi-generator
+
+//struct TTMApi: APIProtocol {
+//	
+//}
