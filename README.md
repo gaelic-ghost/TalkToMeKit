@@ -320,6 +320,40 @@ swift build
 swift test
 ```
 
+### Troubleshooting: `input verification failed` during link
+
+On some toolchain combinations (for example Swift 6.2.3 + Xcode 26.2), `ld`
+may print warnings like:
+
+- `warning: input verification failed`
+- `note: while processing ... .swift.o`
+
+This is a debug-info verification warning and does not typically indicate a
+functional runtime or link failure.
+
+If you want quieter CI/build logs, build with debug info disabled:
+
+```bash
+swift build --product TalkToMeServer -Xswiftc -gnone
+```
+
+### Troubleshooting: macOS deployment/linker mismatch warnings
+
+You may also see warnings like:
+
+- `ld: warning: building for macOS-11.0, but linking with dylib '/usr/lib/swift/libswiftCore.dylib' which was built for newer version 13.0`
+
+In this package, these are emitted while linking the Swift OpenAPI generator
+tool used by the `OpenAPIGenerator` plugin, not while linking `TalkToMeServer`.
+The upstream `swift-openapi-generator` package currently declares
+`.macOS(.v10_15)`, which can trigger these warnings with newer Xcode/Swift
+toolchains.
+
+These warnings are generally benign. If you need quieter CI logs, either:
+
+- keep generated OpenAPI sources checked in and avoid plugin-driven regeneration during routine builds, or
+- filter this specific warning line in CI log post-processing.
+
 ## Embedding checklist (macOS apps)
 
 When embedding `TalkToMeService` into a macOS app, the following items should be explicitly accounted for:
