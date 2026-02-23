@@ -38,6 +38,86 @@ struct TTMServiceTests {
 		#expect(!ready)
 	}
 
+	@Test("Runtime synthesize before start throws notStarted")
+	func runtimeSynthesizeBeforeStartThrows() async {
+		let runtime = TTMServiceRuntime()
+		do {
+			_ = try await runtime.synthesize(.init(text: "hello"))
+			Issue.record("Expected synthesize to throw when runtime is not started")
+		} catch let error as TTMServiceRuntimeError {
+			#expect(error == .notStarted)
+		} catch {
+			Issue.record("Unexpected error: \(error)")
+		}
+	}
+
+	@Test("Runtime status starts stopped")
+	func runtimeStatusStartsStopped() async {
+		let runtime = TTMServiceRuntime()
+		let status = await runtime.status()
+		#expect(!status.started)
+		#expect(!status.ready)
+		#expect(!status.modelLoaded)
+		#expect(status.bridgeStatus == nil)
+	}
+
+	@Test("Runtime start fails for invalid local runtime")
+	func runtimeStartFailsForInvalidRuntime() async {
+		let provider = TTMLocalRuntimeAssetProvider(runtimeRoot: URL(fileURLWithPath: "/tmp/does-not-exist"))
+		let runtime = TTMServiceRuntime(
+			configuration: .init(
+				assetProvider: provider,
+				startupTimeoutSeconds: 1
+			)
+		)
+		do {
+			try await runtime.start()
+			Issue.record("Expected runtime start to fail for invalid runtime path")
+		} catch let error as TTMServiceRuntimeError {
+			#expect(error == .runtimeUnavailable)
+		} catch {
+			Issue.record("Unexpected error: \(error)")
+		}
+		await runtime.stop()
+	}
+
+	@Test("First-launch provider invokes download hook when runtime missing")
+	func firstLaunchProviderInvokesDownloadHook() async {
+		let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+			.appendingPathComponent("ttm-first-launch-\(UUID().uuidString)", isDirectory: true)
+		let marker = tempRoot.appendingPathComponent("download-called.txt")
+		defer {
+			try? FileManager.default.removeItem(at: tempRoot)
+		}
+		try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+
+		let provider = TTMFirstLaunchDownloadAssetProvider(
+			runtimeRoot: tempRoot,
+			pythonVersion: "3.11",
+			downloadIfNeeded: { _, _ in
+				FileManager.default.createFile(atPath: marker.path, contents: Data("ok".utf8))
+			}
+		)
+
+		let runtime = TTMServiceRuntime(
+			configuration: .init(
+				assetProvider: provider,
+				startupTimeoutSeconds: 1
+			)
+		)
+		do {
+			try await runtime.start()
+			Issue.record("Expected first-launch provider start to fail without prepared runtime")
+		} catch let error as TTMServiceRuntimeError {
+			#expect(error == .runtimeUnavailable)
+		} catch {
+			Issue.record("Unexpected error: \(error)")
+		}
+
+		#expect(FileManager.default.fileExists(atPath: marker.path))
+		await runtime.stop()
+	}
+
 	@Test("Bridge status starts empty")
 	func bridgeStatusStartsEmpty() async {
 		let bridge = TTMPythonBridge()

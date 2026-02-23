@@ -61,6 +61,54 @@ swift run TalkToMeServer \
 If no `--python-runtime-root` is provided, the server attempts bundled runtime
 auto-discovery from `TTMPythonRuntimeBundle`.
 
+## Embed in a macOS app
+
+`TalkToMeService` now exposes an app-facing runtime wrapper:
+
+```swift
+import Foundation
+import TTMService
+
+let runtime = TTMServiceRuntime(
+	configuration: .init(
+		assetProvider: TTMBundledRuntimeAssetProvider(pythonVersion: "3.11"),
+		startupTimeoutSeconds: 60
+	)
+)
+
+try await runtime.start()
+let wav = try await runtime.synthesize(.init(text: "Hello from app"))
+await runtime.stop()
+```
+
+For app-managed assets, use `TTMLocalRuntimeAssetProvider(runtimeRoot:)` with a
+runtime path in app support storage (for example after first-launch download).
+
+First-launch download scaffold:
+
+```swift
+import Foundation
+import TTMService
+
+let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+let runtimeRoot = appSupport.appendingPathComponent("TalkToMeKit/Runtime/current", isDirectory: true)
+
+let runtime = TTMServiceRuntime(
+	configuration: .firstLaunch(
+		runtimeRoot: runtimeRoot,
+		pythonVersion: "3.11",
+		downloadIfNeeded: { root, version in
+			// App-specific download/unpack implementation here.
+			// Ensure root contains lib/libpython{version}.dylib and lib/python{version}/...
+			_ = (root, version)
+		},
+		onStateChange: { state in
+			print("Asset state:", state)
+		}
+	)
+)
+```
+
 ## Quick API smoke test
 
 ```bash
