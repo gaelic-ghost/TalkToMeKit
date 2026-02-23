@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import os
 import struct
+import time
 import wave
 from typing import Any, Optional, Sequence
 
@@ -24,6 +25,7 @@ _MODEL_MODE = os.getenv("TTM_QWEN_MODEL_MODE", "custom_voice")
 _LANGUAGE = os.getenv("TTM_QWEN_LANGUAGE", "auto")
 _DEFAULT_SPEAKER = os.getenv("TTM_QWEN_SPEAKER", "serena")
 _ALLOW_FALLBACK = os.getenv("TTM_QWEN_ALLOW_FALLBACK", "0") == "1"
+_DEBUG = os.getenv("TTM_QWEN_DEBUG", "0") == "1"
 
 
 def _silent_wav(sample_rate: int, seconds: float = 0.35) -> bytes:
@@ -128,6 +130,31 @@ def _resolve_local_model_path() -> Optional[str]:
     return None
 
 
+def _debug(message: str) -> None:
+    if not _DEBUG:
+        return
+    try:
+        print(f"[qwen_tts_runner] {message}", flush=True)
+    except Exception:
+        pass
+
+
+def _torch_debug_summary() -> str:
+    try:
+        import torch  # type: ignore[import-not-found]
+    except Exception as error:
+        return f"torch unavailable ({error})"
+    try:
+        mps_available = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+    except Exception:
+        mps_available = False
+    try:
+        mps_built = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_built())
+    except Exception:
+        mps_built = False
+    return f"torch={getattr(torch, '__version__', 'unknown')} mps_built={mps_built} mps_available={mps_available}"
+
+
 def _target_dtype() -> Any:
     # Keep this conservative for portable macOS embedding.
     try:
@@ -179,6 +206,7 @@ def _create_model() -> Optional[Any]:
     if attn_impl:
         kwargs["attn_implementation"] = attn_impl
 
+    _debug(f"loading model source={source!r} kwargs={kwargs!r} {_torch_debug_summary()}")
     return model_type.from_pretrained(source, **kwargs)
 
 
@@ -187,16 +215,21 @@ def load_model() -> bool:
     global _QWEN_MODEL
 
     if _MODEL_LOADED and _QWEN_MODEL is not None:
+        _debug("model already loaded")
         return True
 
+    started_at = time.monotonic()
     model = _create_model()
+    elapsed = time.monotonic() - started_at
     if model is None:
         _QWEN_MODEL = None
         _MODEL_LOADED = False
+        _debug(f"model load failed in {elapsed:.2f}s; fallback_allowed={_ALLOW_FALLBACK}")
         return _ALLOW_FALLBACK
 
     _QWEN_MODEL = model
     _MODEL_LOADED = True
+    _debug(f"model loaded in {elapsed:.2f}s")
     return True
 
 

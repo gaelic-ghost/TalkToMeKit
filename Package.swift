@@ -95,6 +95,10 @@ let package = Package(
 					description: "Stage local Python runtime/model assets for TalkToMeKit development."
 				),
 				permissions: [
+					.allowNetworkConnections(
+						scope: .all(),
+						reason: "Download Python packages and optional Qwen model assets during runtime staging."
+					),
 					.writeToPackageDirectory(reason: "Stage runtime assets under Sources/TTMPythonRuntimeBundle/Resources/Runtime/current."),
 				]
 			),

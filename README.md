@@ -31,19 +31,25 @@ Preferred: use the SwiftPM command plugin.
 Stage runtime only (safe default):
 
 ```bash
-swift package plugin stage-python-runtime
+swift package plugin --allow-network-connections all stage-python-runtime
 ```
 
 Stage runtime only with explicit python:
 
 ```bash
-swift package plugin stage-python-runtime -- --python python3.11 --no-install-qwen
+swift package plugin --allow-network-connections all stage-python-runtime -- --python python3.11 --no-install-qwen
 ```
 
 Stage runtime + install Qwen deps + download model (network-enabled):
 
 ```bash
-swift package plugin stage-python-runtime -- --allow-network --install-qwen --python python3.11
+swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --python python3.11
+```
+
+Stage runtime + install Qwen deps using `uv` explicitly:
+
+```bash
+swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --installer uv --python python3.11
 ```
 
 Direct script usage is still available:
@@ -51,6 +57,10 @@ Direct script usage is still available:
 ```bash
 ./scripts/stage_python_runtime.sh --python python3.11 --no-install-qwen
 ```
+
+Dependency pinning:
+- Runtime package versions are pinned in `scripts/requirements-qwen.txt`.
+- Keep this file updated with a validated set when changing torch/qwen/transformers stack.
 
 Staged location:
 
@@ -123,6 +133,66 @@ let runtime = TTMServiceRuntime(
 )
 ```
 
+### Xcode embedding workflow (recommended)
+
+Use this when embedding `TalkToMeService` into a macOS app target.
+
+1. Add local package dependency to your app project:
+`<path-to-TalkToMeKit>`
+2. Link package product `TalkToMeService` to the app target.
+3. Stage runtime once in the package checkout:
+
+```bash
+cd <path-to-TalkToMeKit>
+swift package plugin --allow-writing-to-package-directory --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --installer uv --python python3.11
+```
+
+4. Add a Run Script build phase to the app target (before app code signing), using:
+
+```sh
+set -euo pipefail
+
+PKG_RUNTIME_ROOT="${SRCROOT}/../TalkToMeKit/Sources/TTMPythonRuntimeBundle/Resources/Runtime/current"
+DEST_RUNTIME_ROOT="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Runtime/current"
+
+if [ ! -d "${PKG_RUNTIME_ROOT}" ]; then
+  echo "error: staged runtime not found at ${PKG_RUNTIME_ROOT}" >&2
+  exit 1
+fi
+
+rm -rf "${DEST_RUNTIME_ROOT}"
+mkdir -p "${DEST_RUNTIME_ROOT}"
+/usr/bin/rsync -a --delete "${PKG_RUNTIME_ROOT}/" "${DEST_RUNTIME_ROOT}/"
+
+SIGN_IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:-}"
+if [ -z "${SIGN_IDENTITY}" ]; then
+  SIGN_IDENTITY="-"
+fi
+
+/usr/bin/find "${DEST_RUNTIME_ROOT}" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 |
+while IFS= read -r -d '' artifact; do
+  /usr/bin/codesign --force --sign "${SIGN_IDENTITY}" --options runtime --timestamp=none "${artifact}"
+done
+
+# Also sign Mach-O executables under Runtime/current/bin (for bundled sox).
+/usr/bin/find "${DEST_RUNTIME_ROOT}/bin" -type f -print0 2>/dev/null |
+while IFS= read -r -d '' artifact; do
+  if /usr/bin/file -b "${artifact}" | /usr/bin/grep -q "Mach-O"; then
+    /usr/bin/codesign --force --sign "${SIGN_IDENTITY}" --options runtime --timestamp=none "${artifact}"
+  fi
+done
+```
+
+5. In app code, use bundle-local runtime path:
+`Bundle.main.resourceURL/Runtime/current`
+
+Notes:
+- If script phase cannot read sibling directories, set app build setting `ENABLE_USER_SCRIPT_SANDBOXING = NO`.
+- `DYLD_*` environment variables are not required for MPS.
+- `ENABLE_OUTGOING_NETWORK_CONNECTIONS` is only needed when downloading models/deps at runtime.
+- The staging script now installs `static-sox` as fallback and stages `sox` into `Runtime/current/bin` when available.
+- Prepend `Runtime/current/bin` to `PATH` before `runtime.start()` so `qwen-tts` can find bundled `sox`.
+
 ## Quick API smoke test
 
 ```bash
@@ -139,8 +209,24 @@ curl -sS -o /tmp/tts.wav \
 - `TTM_QWEN_SYNTH_TIMEOUT_SECONDS`: synth request timeout (default `120`).
 - `TTM_QWEN_LOCAL_MODEL_PATH`: override model path.
 - `TTM_QWEN_MODEL_ID`: override default model id.
+- `TTM_QWEN_DEVICE_MAP`: torch/qwen device map (default `cpu`). On Apple Silicon, set to `mps` for GPU acceleration.
+- `TTM_QWEN_TORCH_DTYPE`: torch dtype override (`float32` default, `float16` and `bfloat16` supported by runner).
 - `TTM_QWEN_ALLOW_FALLBACK`: allow silent fallback output when model load/synth fails (`1` or `0`).
 - `TTM_PYTHON_ENABLE_FINALIZE`: opt-in CPython finalize on shutdown (`1`); disabled by default for runtime stability with native extension threads.
+
+Apple Silicon performance tip:
+
+```bash
+export TTM_QWEN_DEVICE_MAP=mps
+export TTM_QWEN_TORCH_DTYPE=float16
+```
+
+If you encounter Metal/MPS assertion failures during model load or synth in an embedded app, use CPU mode:
+
+```bash
+export TTM_QWEN_DEVICE_MAP=cpu
+unset TTM_QWEN_TORCH_DTYPE
+```
 
 ## Build and test
 

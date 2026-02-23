@@ -1,0 +1,11 @@
+# Pinned package set for TalkToMeKit embedded Qwen runtime (macOS arm64, Python 3.11).
+# Keep this file in sync with known-good runtime validation.
+
+qwen-tts==0.1.1
+transformers==4.57.3
+accelerate==1.12.0
+torch==2.10.0
+torchaudio==2.10.0
+huggingface_hub[cli]==0.36.2
+sox==1.5.0
+static-sox==1.0.2
