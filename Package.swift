@@ -10,11 +10,11 @@ let package = Package(
 	],
 	products: [
 		.executable(
-			name: "TalkToMeServer",
+			name: "TTMServer",
 			targets: [ "TTMServer" ]
 		),
 	    .library(
-	        name: "TalkToMeService",
+	        name: "TTMService",
 	        targets: [ "TTMService" ]
 	    ),
 	    .executable(
