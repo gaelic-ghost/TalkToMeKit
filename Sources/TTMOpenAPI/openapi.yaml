@@ -192,6 +192,31 @@ paths:
           description: Model is loading or runtime dependency unavailable.
         '500':
           description: Model load/synthesis failure.
+  /synthesize/voice-clone:
+    post:
+      tags: [tts]
+      summary: Synthesize VoiceClone
+      operationId: synthesize_voice_clone_synthesize_voice_clone_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SynthesizeVoiceCloneRequest'
+      responses:
+        '200':
+          description: Generated WAV audio bytes.
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Bad request (unsupported format or invalid reference audio).
+        '503':
+          description: Model is loading or runtime dependency unavailable.
+        '500':
+          description: Model load/synthesis failure.
 components:
   schemas:
     ModelMode:
@@ -199,12 +224,15 @@ components:
       enum:
         - voice_design
         - custom_voice
+        - voice_clone
     ModelId:
       type: string
       enum:
         - Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
         - Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
         - Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+        - Qwen/Qwen3-TTS-12Hz-0.6B-Base
+        - Qwen/Qwen3-TTS-12Hz-1.7B-Base
     AdapterInfo:
       type: object
       required: [id, name, status_path]
@@ -353,6 +381,27 @@ components:
           default: ryan
         instruct:
           type: string
+        language:
+          type: string
+          minLength: 1
+          default: English
+        model_id:
+          $ref: '#/components/schemas/ModelId'
+        format:
+          type: string
+          default: wav
+    SynthesizeVoiceCloneRequest:
+      type: object
+      required: [text, reference_audio_b64, language]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        reference_audio_b64:
+          type: string
+          minLength: 1
+          description: Base64-encoded reference audio bytes used for cloning.
         language:
           type: string
           minLength: 1

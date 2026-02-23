@@ -261,13 +261,50 @@ struct TTMApi: APIProtocol {
 		guard modelID.mode == .customVoice else {
 			return .badRequest
 		}
-			let qwenRequest = QwenSynthesisRequest.customVoice(
-				text: request.text,
-				speaker: request.speaker,
-				instruct: request.instruct,
-				language: request.language,
-				modelID: modelID
-			)
+		let qwenRequest = QwenSynthesisRequest.customVoice(
+			text: request.text,
+			speaker: request.speaker,
+			instruct: request.instruct,
+			language: request.language,
+			modelID: modelID
+		)
+
+		do {
+			let wavBytes = try await synthesizeWithTimeout(request: qwenRequest, qwenService: qwenService)
+			let body = HTTPBody(wavBytes)
+			return .ok(.init(body: .audioWav(body)))
+		} catch is SynthesisTimeoutError {
+			return .serviceUnavailable
+		} catch {
+			return .internalServerError
+		}
+	}
+
+	func synthesizeVoiceCloneSynthesizeVoiceClonePost(_ input: TTMOpenAPI.Operations.SynthesizeVoiceCloneSynthesizeVoiceClonePost.Input) async throws -> TTMOpenAPI.Operations.SynthesizeVoiceCloneSynthesizeVoiceClonePost.Output {
+		let request = voiceCloneBody(from: input.body)
+		guard isSupportedAudioFormat(request.format) else {
+			return .badRequest
+		}
+		guard let qwenService else {
+			return .serviceUnavailable
+		}
+		guard await qwenService.isReady() else {
+			return .serviceUnavailable
+		}
+		guard let referenceAudio = Data(base64Encoded: request.referenceAudioB64) else {
+			return .badRequest
+		}
+
+		let modelID = request.modelId.flatMap(qwenModelIdentifier(from:)) ?? .voiceClone0_6B
+		guard modelID.mode == .voiceClone else {
+			return .badRequest
+		}
+		let qwenRequest = QwenSynthesisRequest.voiceClone(
+			text: request.text,
+			referenceAudio: referenceAudio,
+			language: request.language,
+			modelID: modelID
+		)
 
 		do {
 			let wavBytes = try await synthesizeWithTimeout(request: qwenRequest, qwenService: qwenService)
@@ -295,6 +332,13 @@ struct TTMApi: APIProtocol {
 	}
 
 	private func customVoiceBody(from body: TTMOpenAPI.Operations.SynthesizeCustomVoiceSynthesizeCustomVoicePost.Input.Body) -> Components.Schemas.SynthesizeCustomVoiceRequest {
+		switch body {
+		case let .json(request):
+			return request
+		}
+	}
+
+	private func voiceCloneBody(from body: TTMOpenAPI.Operations.SynthesizeVoiceCloneSynthesizeVoiceClonePost.Input.Body) -> Components.Schemas.SynthesizeVoiceCloneRequest {
 		switch body {
 		case let .json(request):
 			return request
@@ -407,6 +451,8 @@ struct TTMApi: APIProtocol {
 			return .voiceDesign
 		case .customVoice:
 			return .customVoice
+		case .voiceClone:
+			return .voiceClone
 		}
 	}
 
@@ -418,6 +464,10 @@ struct TTMApi: APIProtocol {
 			return .qwenQwen3TTS12Hz0_6BCustomVoice
 		case .customVoice1_7B:
 			return .qwenQwen3TTS12Hz1_7BCustomVoice
+		case .voiceClone0_6B:
+			return .qwenQwen3TTS12Hz0_6BBase
+		case .voiceClone1_7B:
+			return .qwenQwen3TTS12Hz1_7BBase
 		}
 	}
 
@@ -427,6 +477,8 @@ struct TTMApi: APIProtocol {
 			return .voiceDesign
 		case .customVoice:
 			return .customVoice
+		case .voiceClone:
+			return .voiceClone
 		}
 	}
 
@@ -438,6 +490,10 @@ struct TTMApi: APIProtocol {
 			return .customVoice0_6B
 		case .qwenQwen3TTS12Hz1_7BCustomVoice:
 			return .customVoice1_7B
+		case .qwenQwen3TTS12Hz0_6BBase:
+			return .voiceClone0_6B
+		case .qwenQwen3TTS12Hz1_7BBase:
+			return .voiceClone1_7B
 		}
 	}
 

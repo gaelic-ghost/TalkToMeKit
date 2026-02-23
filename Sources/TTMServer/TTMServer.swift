@@ -22,7 +22,7 @@ struct TTMServerMain: AsyncParsableCommand {
 	@Option(name: .long, help: "Bundled CPython version under runtime root.")
 	var pythonVersion: String = "3.11"
 
-	@Option(name: .long, help: "Startup mode: voice_design | custom_voice")
+	@Option(name: .long, help: "Startup mode: voice_design | custom_voice | voice_clone")
 	var qwenMode: String = QwenSynthesisMode.voiceDesign.rawValue
 
 	@Option(name: .long, help: "Startup model id (optional; defaults by mode).")
@@ -70,7 +70,7 @@ struct TTMServerMain: AsyncParsableCommand {
 
 	private func resolveStartupSelection() throws -> QwenModelSelection {
 		guard let mode = QwenSynthesisMode(rawValue: qwenMode) else {
-			throw ValidationError("Invalid --qwen-mode \(qwenMode). Use voice_design or custom_voice.")
+			throw ValidationError("Invalid --qwen-mode \(qwenMode). Use voice_design, custom_voice, or voice_clone.")
 		}
 		let modelID = qwenModelID.flatMap(QwenModelIdentifier.init(rawValue:))
 		if qwenModelID != nil, modelID == nil {

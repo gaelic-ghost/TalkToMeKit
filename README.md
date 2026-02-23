@@ -7,7 +7,7 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 
 - In-process CPython embedding is implemented and running.
 - `TTMService` integrates Qwen3-TTS as a `swift-service-lifecycle` service.
-- `TalkToMeServer` exposes `/synthesize/voice-design`, `/synthesize/custom-voice`, and model status/load endpoints.
+- `TalkToMeServer` exposes `/synthesize/voice-design`, `/synthesize/custom-voice`, `/synthesize/voice-clone`, and model status/load endpoints.
 - Bundled runtime auto-discovery is supported via `TTMPythonRuntimeBundle`.
 
 ## Project layout
@@ -52,10 +52,16 @@ Stage runtime + install Qwen deps using `uv` explicitly:
 swift package plugin --allow-network-connections all stage-python-runtime -- --allow-network --install-qwen --installer uv --python python3.11
 ```
 
-Restage runtime (wipe existing `Runtime/current`, reinstall deps, and download VD 1.7B + CV 0.6B + CV 1.7B):
+Restage runtime (wipe existing `Runtime/current`, reinstall deps, and download VD 1.7B + CV 0.6B + Base 0.6B defaults):
 
 ```bash
 swift package plugin --allow-network-connections all stage-python-runtime -- --restage
+```
+
+Include optional 1.7B variants when needed:
+
+```bash
+swift package plugin --allow-network-connections all stage-python-runtime -- --restage --include-cv-1.7b --include-base-1.7b
 ```
 
 Direct script usage is still available:
@@ -214,8 +220,8 @@ let wav = try await runtime.synthesize(
 		text: "Hello from app",
 		voice: "ryan", // speaker for custom_voice, instruction for voice_design
 		instruct: "Cheerful with slightly faster pacing", // optional for custom_voice
-		mode: .customVoice, // or .voiceDesign
-		modelID: .customVoice0_6B, // or .customVoice1_7B / .voiceDesign1_7B
+		mode: .customVoice, // or .voiceDesign / .voiceClone
+		modelID: .customVoice0_6B, // or .customVoice1_7B / .voiceDesign1_7B / .voiceClone0_6B / .voiceClone1_7B
 		language: "English"
 	)
 )
@@ -224,6 +230,7 @@ let wav = try await runtime.synthesize(
 Defaults:
 - VoiceDesign default model: `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
 - CustomVoice default model: `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
+- VoiceClone default model: `Qwen/Qwen3-TTS-12Hz-0.6B-Base`
 - CustomVoice default speaker (when `voice` is omitted): `ryan`
 
 ### Example app reference
@@ -249,6 +256,10 @@ curl -sS -o /tmp/tts-cv.wav \
   -H 'content-type: application/json' \
   -d '{"text":"Hello from TalkToMeKit","speaker":"ryan","instruct":"Cheerful and energetic","language":"English","format":"wav"}' \
   http://127.0.0.1:8091/synthesize/custom-voice
+curl -sS -o /tmp/tts-clone.wav \
+  -H 'content-type: application/json' \
+  -d '{"text":"Hello from TalkToMeKit","reference_audio_b64":"<BASE64_WAV_BYTES>","language":"English","format":"wav"}' \
+  http://127.0.0.1:8091/synthesize/voice-clone
 curl -sS \
   -H 'content-type: application/json' \
   -d '{"mode":"custom_voice","model_id":"Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"}' \
@@ -256,6 +267,10 @@ curl -sS \
 curl -sS \
   -H 'content-type: application/json' \
   -d '{"mode":"voice_design","model_id":"Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign","strict_load":true}' \
+  http://127.0.0.1:8091/model/load
+curl -sS \
+  -H 'content-type: application/json' \
+  -d '{"mode":"voice_clone","model_id":"Qwen/Qwen3-TTS-12Hz-0.6B-Base"}' \
   http://127.0.0.1:8091/model/load
 ```
 

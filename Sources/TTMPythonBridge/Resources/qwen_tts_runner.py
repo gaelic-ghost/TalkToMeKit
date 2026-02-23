@@ -6,6 +6,7 @@ This module is imported by the in-process CPython bridge and provides:
     is_model_loaded() -> bool
     synthesize_voice_design(text: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes
     synthesize_custom_voice(text: str, speaker: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes
+    synthesize_voice_clone(text: str, reference_audio: bytes, language: str, sample_rate: int, model_id: str) -> bytes
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ _ACTIVE_MODEL_ID: Optional[str] = None
 DEFAULT_MODE = os.getenv("TTM_QWEN_MODE", "voice_design")
 DEFAULT_VOICE_DESIGN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
 DEFAULT_CUSTOM_VOICE_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+DEFAULT_VOICE_CLONE_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 DEFAULT_LANGUAGE = os.getenv("TTM_QWEN_LANGUAGE", "English")
 DEFAULT_SPEAKER = os.getenv("TTM_QWEN_SPEAKER", "ryan")
 _ALLOW_FALLBACK = os.getenv("TTM_QWEN_ALLOW_FALLBACK", "0") == "1"
@@ -39,6 +41,10 @@ MODEL_REGISTRY: dict[str, list[str]] = {
     "custom_voice": [
         DEFAULT_CUSTOM_VOICE_MODEL,
         "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    ],
+    "voice_clone": [
+        DEFAULT_VOICE_CLONE_MODEL,
+        "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
     ],
 }
 
@@ -383,6 +389,69 @@ def _generate_custom_voice(text: str, speaker: str, instruct: Optional[str], lan
     return None
 
 
+def _generate_voice_clone(text: str, reference_audio: bytes, language: str) -> Optional[bytes]:
+    if _QWEN_MODEL is None:
+        return None
+
+    reference_path: Optional[str] = None
+    try:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+            handle.write(reference_audio)
+            reference_path = handle.name
+
+        candidates: list[dict[str, Any]] = [
+            {
+                "method": "generate_voice_clone",
+                "kwargs": {
+                    "text": text,
+                    "language": language,
+                    "reference_audio": reference_path,
+                },
+            },
+            {
+                "method": "generate_voice_clone",
+                "kwargs": {
+                    "text": text,
+                    "language": language,
+                    "prompt_audio": reference_path,
+                },
+            },
+            {
+                "method": "generate_base",
+                "kwargs": {
+                    "text": text,
+                    "language": language,
+                    "prompt_audio": reference_path,
+                },
+            },
+        ]
+
+        for candidate in candidates:
+            method_name = candidate["method"]
+            method = getattr(_QWEN_MODEL, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                output = method(**candidate["kwargs"])
+                wav_payload, sr = _extract_audio_and_sample_rate(output, 24_000)
+                if isinstance(wav_payload, (bytes, bytearray, memoryview)):
+                    return bytes(wav_payload)
+                if wav_payload is not None:
+                    return _to_wav_bytes(_normalize_samples(wav_payload), sr)
+            except TypeError:
+                continue
+    finally:
+        if reference_path and os.path.exists(reference_path):
+            try:
+                os.remove(reference_path)
+            except Exception:
+                pass
+
+    return None
+
+
 def get_supported_speakers(mode: Optional[str] = None, model_id: Optional[str] = None) -> list[str]:
     resolved_mode = _resolve_mode(mode)
     if resolved_mode != "custom_voice":
@@ -451,3 +520,30 @@ def synthesize_custom_voice(text: str, speaker: str, instruct: str, language: st
         return _silent_wav(sample_rate=sample_rate)
 
     raise RuntimeError("Qwen3-TTS CustomVoice synthesis failed")
+
+
+def synthesize_voice_clone(text: str, reference_audio: bytes, language: str, sample_rate: int, model_id: str) -> bytes:
+    if not text.strip():
+        raise ValueError("text must not be empty")
+    if not reference_audio:
+        raise ValueError("reference_audio must not be empty")
+
+    resolved_mode = "voice_clone"
+    resolved_model = _resolve_model(resolved_mode, model_id)
+    resolved_language = language or DEFAULT_LANGUAGE
+
+    if not _ensure_loaded(mode=resolved_mode, model_id=resolved_model):
+        raise RuntimeError("Qwen3-TTS runtime unavailable: failed to load model")
+
+    audio = _generate_voice_clone(
+        text=text,
+        reference_audio=reference_audio,
+        language=resolved_language,
+    )
+    if audio is not None:
+        return audio
+
+    if _ALLOW_FALLBACK:
+        return _silent_wav(sample_rate=sample_rate)
+
+    raise RuntimeError("Qwen3-TTS VoiceClone synthesis failed")

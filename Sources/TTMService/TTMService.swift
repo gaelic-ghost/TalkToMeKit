@@ -6,6 +6,7 @@ public enum TTMServiceRuntimeError: Error, Sendable, Equatable {
 	case alreadyStarted
 	case notStarted
 	case notReady
+	case invalidRequest
 	case startupTimedOut(seconds: Int)
 	case runtimeUnavailable
 }
@@ -21,6 +22,7 @@ public struct TTMServiceSynthesizeRequest: Sendable {
 	public var text: String
 	public var voice: String?
 	public var instruct: String?
+	public var referenceAudio: Data?
 	public var mode: QwenSynthesisMode
 	public var modelID: QwenModelIdentifier?
 	public var language: String
@@ -30,6 +32,7 @@ public struct TTMServiceSynthesizeRequest: Sendable {
 		text: String,
 		voice: String? = nil,
 		instruct: String? = nil,
+		referenceAudio: Data? = nil,
 		mode: QwenSynthesisMode = .customVoice,
 		modelID: QwenModelIdentifier? = nil,
 		language: String = "English",
@@ -38,6 +41,7 @@ public struct TTMServiceSynthesizeRequest: Sendable {
 		self.text = text
 		self.voice = voice
 		self.instruct = instruct
+		self.referenceAudio = referenceAudio
 		self.mode = mode
 		self.modelID = modelID
 		self.language = language
@@ -263,25 +267,36 @@ public actor TTMServiceRuntime {
 
 		let resolvedModelID = request.modelID ?? QwenModelIdentifier.defaultModel(for: request.mode)
 		let qwenRequest: QwenSynthesisRequest
-			switch request.mode {
-			case .voiceDesign:
-				qwenRequest = .voiceDesign(
-					text: request.text,
-					instruct: request.instruct ?? request.voice ?? "",
-					language: request.language,
-					modelID: resolvedModelID,
-					sampleRate: request.sampleRate
-				)
-			case .customVoice:
-				qwenRequest = .customVoice(
-					text: request.text,
-					speaker: request.voice ?? "ryan",
-					instruct: request.instruct,
-					language: request.language,
-					modelID: resolvedModelID,
-					sampleRate: request.sampleRate
-				)
+		switch request.mode {
+		case .voiceDesign:
+			qwenRequest = .voiceDesign(
+				text: request.text,
+				instruct: request.instruct ?? request.voice ?? "",
+				language: request.language,
+				modelID: resolvedModelID,
+				sampleRate: request.sampleRate
+			)
+		case .customVoice:
+			qwenRequest = .customVoice(
+				text: request.text,
+				speaker: request.voice ?? "ryan",
+				instruct: request.instruct,
+				language: request.language,
+				modelID: resolvedModelID,
+				sampleRate: request.sampleRate
+			)
+		case .voiceClone:
+			guard let referenceAudio = request.referenceAudio else {
+				throw TTMServiceRuntimeError.invalidRequest
 			}
+			qwenRequest = .voiceClone(
+				text: request.text,
+				referenceAudio: referenceAudio,
+				language: request.language,
+				modelID: resolvedModelID,
+				sampleRate: request.sampleRate
+			)
+		}
 
 		return try await service.synthesize(qwenRequest)
 	}

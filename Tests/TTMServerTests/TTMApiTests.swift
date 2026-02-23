@@ -121,7 +121,7 @@ struct TTMApiTests {
 		let api = TTMApi()
 		let output = try await api.versionVersionGet(.init())
 		let body = try output.ok.body.json
-		#expect(body.apiVersion == "0.3.0")
+		#expect(body.apiVersion == "0.5.0")
 		#expect(body.openapiVersion == "3.1.0")
 	}
 
@@ -211,6 +211,17 @@ struct TTMApiTests {
 		let request = Components.Schemas.ModelLoadRequest(
 			mode: .voiceDesign,
 			modelId: .qwenQwen3TTS12Hz0_6BCustomVoice
+		)
+		let output = try await api.modelLoadModelLoadPost(.init(body: .json(request)))
+		_ = try output.badRequest
+	}
+
+	@Test("POST /model/load validates incompatible voice_clone mode and model")
+	func modelLoadBadRequestForIncompatibleVoiceCloneSelection() async throws {
+		let api = TTMApi()
+		let request = Components.Schemas.ModelLoadRequest(
+			mode: .voiceClone,
+			modelId: .qwenQwen3TTS12Hz1_7BCustomVoice
 		)
 		let output = try await api.modelLoadModelLoadPost(.init(body: .json(request)))
 		_ = try output.badRequest
@@ -514,5 +525,87 @@ struct TTMApiTests {
 		_ = try output.ok.body.audioWav
 		let captured = await fake.capturedSynthesisRequest()
 		#expect(captured?.instruct == "cheerful and energetic")
+	}
+
+	@Test("POST /synthesize/voice-clone validates base64 input")
+	func synthesizeVoiceCloneBadBase64() async throws {
+		let fake = FakeQwenService(statusValue: .init(
+			runtimeInitialized: true,
+			moduleLoaded: true,
+			modelLoaded: true,
+			activeMode: .voiceClone,
+			activeModelID: .voiceClone0_6B,
+			requestedMode: nil,
+			requestedModelID: nil,
+			strictLoad: false,
+			fallbackApplied: false,
+			ready: true,
+			lastError: nil
+		))
+		let api = TTMApi(qwenService: fake)
+		let request = Components.Schemas.SynthesizeVoiceCloneRequest(
+			text: "hello",
+			referenceAudioB64: "not-base64",
+			language: "English"
+		)
+		let output = try await api.synthesizeVoiceCloneSynthesizeVoiceClonePost(.init(body: .json(request)))
+		_ = try output.badRequest
+	}
+
+	@Test("POST /synthesize/voice-clone validates mode/model compatibility")
+	func synthesizeVoiceCloneBadModel() async throws {
+		let fake = FakeQwenService(statusValue: .init(
+			runtimeInitialized: true,
+			moduleLoaded: true,
+			modelLoaded: true,
+			activeMode: .voiceClone,
+			activeModelID: .voiceClone0_6B,
+			requestedMode: nil,
+			requestedModelID: nil,
+			strictLoad: false,
+			fallbackApplied: false,
+			ready: true,
+			lastError: nil
+		))
+		let api = TTMApi(qwenService: fake)
+		let request = Components.Schemas.SynthesizeVoiceCloneRequest(
+			text: "hello",
+			referenceAudioB64: Data("ref".utf8).base64EncodedString(),
+			language: "English",
+			modelId: .qwenQwen3TTS12Hz1_7BCustomVoice
+		)
+		let output = try await api.synthesizeVoiceCloneSynthesizeVoiceClonePost(.init(body: .json(request)))
+		_ = try output.badRequest
+	}
+
+	@Test("POST /synthesize/voice-clone returns wav audio for valid requests")
+	func synthesizeVoiceCloneSuccess() async throws {
+		let fake = FakeQwenService(statusValue: .init(
+			runtimeInitialized: true,
+			moduleLoaded: true,
+			modelLoaded: true,
+			activeMode: .voiceClone,
+			activeModelID: .voiceClone1_7B,
+			requestedMode: nil,
+			requestedModelID: nil,
+			strictLoad: false,
+			fallbackApplied: false,
+			ready: true,
+			lastError: nil
+		))
+		await fake.configureSynthesis(data: Data("RIFF-clone".utf8))
+		let api = TTMApi(qwenService: fake)
+		let request = Components.Schemas.SynthesizeVoiceCloneRequest(
+			text: "hello",
+			referenceAudioB64: Data("ref".utf8).base64EncodedString(),
+			language: "English",
+			modelId: .qwenQwen3TTS12Hz1_7BBase
+		)
+		let output = try await api.synthesizeVoiceCloneSynthesizeVoiceClonePost(.init(body: .json(request)))
+		_ = try output.ok.body.audioWav
+		let captured = await fake.capturedSynthesisRequest()
+		#expect(captured?.mode == .voiceClone)
+		#expect(captured?.modelID == .voiceClone1_7B)
+		#expect(captured?.referenceAudio == Data("ref".utf8))
 	}
 }

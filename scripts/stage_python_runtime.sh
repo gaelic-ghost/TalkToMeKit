@@ -16,6 +16,7 @@ Options:
   --restage               Remove existing runtime root before staging
   --model-id ID           Additional Qwen model id to pre-download (repeatable)
   --include-cv-1.7b       Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+  --include-base-1.7b     Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-Base
   --install-qwen          Install qwen-tts and dependencies into the runtime environment (default)
   --no-install-qwen       Skip package installation; stage from current environment only
   --help                  Show this help
@@ -29,8 +30,10 @@ MODEL_IDS=()
 DEFAULT_MODELS=(
   "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
   "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+  "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 )
 INCLUDE_CV_17B="0"
+INCLUDE_BASE_17B="0"
 INSTALL_QWEN="1"
 RESTAGE="0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +63,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --include-cv-1.7b)
       INCLUDE_CV_17B="1"
+      shift
+      ;;
+    --include-base-1.7b)
+      INCLUDE_BASE_17B="1"
       shift
       ;;
     --install-qwen)
@@ -217,6 +224,9 @@ if [[ "$INSTALL_QWEN" == "1" ]]; then
   DOWNLOAD_MODELS=("${DEFAULT_MODELS[@]}")
   if [[ "$INCLUDE_CV_17B" == "1" ]]; then
     DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+  fi
+  if [[ "$INCLUDE_BASE_17B" == "1" ]]; then
+    DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-Base")
   fi
   if [[ "${#MODEL_IDS[@]}" -gt 0 ]]; then
     DOWNLOAD_MODELS+=("${MODEL_IDS[@]}")
