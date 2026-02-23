@@ -206,6 +206,8 @@ Notes:
 ```bash
 curl -sS http://127.0.0.1:8091/health
 curl -sS http://127.0.0.1:8091/model/status
+curl -sS http://127.0.0.1:8091/model/inventory
+curl -sS http://127.0.0.1:8091/custom-voice/speakers
 curl -sS -o /tmp/tts-vd.wav \
   -H 'content-type: application/json' \
   -d '{"text":"Hello from TalkToMeKit","instruct":"Warm narrator voice","language":"English","format":"wav"}' \
@@ -218,6 +220,24 @@ curl -sS \
   -H 'content-type: application/json' \
   -d '{"mode":"custom_voice","model_id":"Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"}' \
   http://127.0.0.1:8091/model/load
+curl -sS \
+  -H 'content-type: application/json' \
+  -d '{"mode":"voice_design","model_id":"Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign","strict_load":true}' \
+  http://127.0.0.1:8091/model/load
+```
+
+## Troubleshooting staged models
+
+- Use `GET /model/inventory` to verify which model directories are present under staged runtime `models/`.
+- Use `GET /model/status` to compare requested vs active model:
+  - `requested_mode`, `requested_model_id`, and `strict_load` show what was asked for.
+  - `fallback_applied` indicates runtime loaded a fallback model.
+- Use `POST /model/load` with `"strict_load": true` to fail fast instead of falling back when a requested model is not staged.
+- Use `GET /custom-voice/speakers` to inspect available speaker IDs for the active or requested CustomVoice model.
+- If inventory is missing entries, restage with:
+
+```bash
+swift package plugin --allow-network-connections all stage-python-runtime -- --restage
 ```
 
 ## Runtime environment flags

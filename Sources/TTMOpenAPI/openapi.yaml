@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: TalkToMePy Service
   description: A local TTS service for Qwen3-TTS VoiceDesign and CustomVoice modes.
-  version: 0.2.0
+  version: 0.3.0
 paths:
   /health:
     get:
@@ -70,6 +70,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelStatusResponse'
+  /model/inventory:
+    get:
+      tags: [system]
+      summary: Model Inventory
+      operationId: model_inventory_model_inventory_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelInventoryResponse'
   /model/load:
     post:
       tags: [system]
@@ -108,6 +120,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelStatusResponse'
+  /custom-voice/speakers:
+    get:
+      tags: [tts]
+      summary: CustomVoice Speakers
+      operationId: custom_voice_speakers_custom_voice_speakers_get
+      parameters:
+        - name: model_id
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ModelId'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomVoiceSpeakersResponse'
+        '400':
+          description: Invalid model_id for custom_voice.
+        '503':
+          description: Model runtime unavailable.
   /synthesize/voice-design:
     post:
       tags: [tts]
@@ -191,7 +225,7 @@ components:
             $ref: '#/components/schemas/AdapterInfo'
     AdapterStatusResponse:
       type: object
-      required: [adapter_id, mode, model_id, loaded, loading, qwen_tts_available, ready, detail]
+      required: [adapter_id, mode, model_id, loaded, loading, qwen_tts_available, ready, detail, strict_load, fallback_applied]
       properties:
         adapter_id:
           type: string
@@ -199,23 +233,9 @@ components:
           $ref: '#/components/schemas/ModelMode'
         model_id:
           $ref: '#/components/schemas/ModelId'
-        loaded:
-          type: boolean
-        loading:
-          type: boolean
-        qwen_tts_available:
-          type: boolean
-        ready:
-          type: boolean
-        detail:
-          type: string
-    ModelStatusResponse:
-      type: object
-      required: [mode, model_id, loaded, loading, qwen_tts_available, ready, detail]
-      properties:
-        mode:
+        requested_mode:
           $ref: '#/components/schemas/ModelMode'
-        model_id:
+        requested_model_id:
           $ref: '#/components/schemas/ModelId'
         loaded:
           type: boolean
@@ -224,6 +244,36 @@ components:
         qwen_tts_available:
           type: boolean
         ready:
+          type: boolean
+        strict_load:
+          type: boolean
+        fallback_applied:
+          type: boolean
+        detail:
+          type: string
+    ModelStatusResponse:
+      type: object
+      required: [mode, model_id, loaded, loading, qwen_tts_available, ready, detail, strict_load, fallback_applied]
+      properties:
+        mode:
+          $ref: '#/components/schemas/ModelMode'
+        model_id:
+          $ref: '#/components/schemas/ModelId'
+        requested_mode:
+          $ref: '#/components/schemas/ModelMode'
+        requested_model_id:
+          $ref: '#/components/schemas/ModelId'
+        loaded:
+          type: boolean
+        loading:
+          type: boolean
+        qwen_tts_available:
+          type: boolean
+        ready:
+          type: boolean
+        strict_load:
+          type: boolean
+        fallback_applied:
           type: boolean
         detail:
           type: string
@@ -235,6 +285,39 @@ components:
           $ref: '#/components/schemas/ModelMode'
         model_id:
           $ref: '#/components/schemas/ModelId'
+        strict_load:
+          type: boolean
+          default: false
+    ModelInventoryEntry:
+      type: object
+      required: [mode, model_id, available, local_path]
+      properties:
+        mode:
+          $ref: '#/components/schemas/ModelMode'
+        model_id:
+          $ref: '#/components/schemas/ModelId'
+        available:
+          type: boolean
+        local_path:
+          type: string
+    ModelInventoryResponse:
+      type: object
+      required: [models]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelInventoryEntry'
+    CustomVoiceSpeakersResponse:
+      type: object
+      required: [model_id, speakers]
+      properties:
+        model_id:
+          $ref: '#/components/schemas/ModelId'
+        speakers:
+          type: array
+          items:
+            type: string
     SynthesizeVoiceDesignRequest:
       type: object
       required: [text, instruct, language]

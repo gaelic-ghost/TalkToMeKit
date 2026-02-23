@@ -24,7 +24,7 @@ struct TTMApi: APIProtocol {
 		_ = input
 		let payload = Components.Schemas.VersionResponse(
 			service: "TalkToMeKit",
-			apiVersion: "0.2.0",
+			apiVersion: "0.3.0",
 			openapiVersion: "3.1.0"
 		)
 		return .ok(.init(body: .json(payload)))
@@ -44,15 +44,19 @@ struct TTMApi: APIProtocol {
 
 	func adapterStatusAdaptersAdapterIdStatusGet(_ input: TTMOpenAPI.Operations.AdapterStatusAdaptersAdapterIdStatusGet.Input) async throws -> TTMOpenAPI.Operations.AdapterStatusAdaptersAdapterIdStatusGet.Output {
 		let status = await currentStatus()
-		let selection = currentSelection(from: status)
+		let context = statusContext(from: status)
 		let payload = Components.Schemas.AdapterStatusResponse(
 			adapterId: input.path.adapterId,
-			mode: modelModeSchema(from: selection.mode),
-			modelId: modelIDSchema(from: selection.modelID),
+			mode: modelModeSchema(from: context.active.mode),
+			modelId: modelIDSchema(from: context.active.modelID),
+			requestedMode: modelModeSchema(from: context.requested.mode),
+			requestedModelId: modelIDSchema(from: context.requested.modelID),
 			loaded: status.modelLoaded,
 			loading: false,
 			qwenTtsAvailable: qwenService != nil,
 			ready: status.ready,
+			strictLoad: context.strictLoad,
+			fallbackApplied: context.fallbackApplied,
 			detail: qwenStatusDetail(status: status)
 		)
 		return .ok(.init(body: .json(payload)))
@@ -61,14 +65,43 @@ struct TTMApi: APIProtocol {
 	func modelStatusModelStatusGet(_ input: TTMOpenAPI.Operations.ModelStatusModelStatusGet.Input) async throws -> TTMOpenAPI.Operations.ModelStatusModelStatusGet.Output {
 		_ = input
 		let status = await currentStatus()
-		let selection = currentSelection(from: status)
+		let context = statusContext(from: status)
 		let payload = modelStatusResponse(
-			selection: selection,
+			active: context.active,
+			requested: context.requested,
+			strictLoad: context.strictLoad,
+			fallbackApplied: context.fallbackApplied,
 			modelLoaded: status.modelLoaded,
 			ready: status.ready,
 			detail: qwenStatusDetail(status: status)
 		)
 		return .ok(.init(body: .json(payload)))
+	}
+
+	func modelInventoryModelInventoryGet(_ input: TTMOpenAPI.Operations.ModelInventoryModelInventoryGet.Input) async throws -> TTMOpenAPI.Operations.ModelInventoryModelInventoryGet.Output {
+		_ = input
+		let models: [Components.Schemas.ModelInventoryEntry]
+		if let qwenService {
+			let inventory = await qwenService.modelInventory()
+			models = inventory.map {
+				.init(
+					mode: modelModeSchema(from: $0.mode),
+					modelId: modelIDSchema(from: $0.modelID),
+					available: $0.available,
+					localPath: $0.localPath
+				)
+			}
+		} else {
+			models = QwenModelIdentifier.allCases.map {
+				.init(
+					mode: modelModeSchema(from: $0.mode),
+					modelId: modelIDSchema(from: $0),
+					available: false,
+					localPath: ""
+				)
+			}
+		}
+		return .ok(.init(body: .json(.init(models: models))))
 	}
 
 	func modelLoadModelLoadPost(_ input: TTMOpenAPI.Operations.ModelLoadModelLoadPost.Input) async throws -> TTMOpenAPI.Operations.ModelLoadModelLoadPost.Output {
@@ -80,22 +113,32 @@ struct TTMApi: APIProtocol {
 		if request.modelId != nil, requestedModel == nil {
 			return .badRequest
 		}
+		let strictLoad = request.strictLoad ?? false
 		let selection = QwenModelSelection(mode: mode, modelID: requestedModel)
 		guard selection.modelID.mode == selection.mode else {
 			return .badRequest
 		}
 
 		guard let qwenService else {
-			let payload = unloadedModelStatusResponse(selection: selection, detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root")
+			let payload = unloadedModelStatusResponse(
+				active: selection,
+				requested: selection,
+				strictLoad: strictLoad,
+				fallbackApplied: false,
+				detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root"
+			)
 			return .accepted(.init(body: .json(payload)))
 		}
 
 		do {
-			let loaded = try await qwenService.loadModel(selection: selection)
+			let loaded = try await qwenService.loadModel(selection: selection, strict: strictLoad)
 			let status = await qwenService.status()
-			let activeSelection = status.activeModelID.map { .init(mode: status.activeMode ?? $0.mode, modelID: $0) } ?? selection
+			let context = statusContext(from: status)
 			let payload = modelStatusResponse(
-				selection: activeSelection,
+				active: context.active,
+				requested: context.requested,
+				strictLoad: context.strictLoad,
+				fallbackApplied: context.fallbackApplied,
 				modelLoaded: loaded,
 				ready: status.ready,
 				detail: qwenStatusDetail(status: status)
@@ -103,8 +146,14 @@ struct TTMApi: APIProtocol {
 			return loaded ? .ok(.init(body: .json(payload))) : .accepted(.init(body: .json(payload)))
 		} catch {
 			let status = await currentStatus()
-			let fallbackSelection = currentSelection(from: status)
-			let payload = unloadedModelStatusResponse(selection: fallbackSelection, detail: qwenStatusDetail(status: status))
+			let context = statusContext(from: status, fallbackRequested: selection)
+			let payload = unloadedModelStatusResponse(
+				active: context.active,
+				requested: context.requested,
+				strictLoad: context.strictLoad,
+				fallbackApplied: context.fallbackApplied,
+				detail: qwenStatusDetail(status: status)
+			)
 			return .accepted(.init(body: .json(payload)))
 		}
 	}
@@ -113,7 +162,13 @@ struct TTMApi: APIProtocol {
 		_ = input
 		guard let qwenService else {
 			let selection = QwenModelSelection.defaultVoiceDesign
-			let payload = unloadedModelStatusResponse(selection: selection, detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root")
+			let payload = unloadedModelStatusResponse(
+				active: selection,
+				requested: selection,
+				strictLoad: false,
+				fallbackApplied: false,
+				detail: "Qwen3-TTS service is disabled; start server with --python-runtime-root"
+			)
 			return .ok(.init(body: .json(payload)))
 		}
 
@@ -123,9 +178,37 @@ struct TTMApi: APIProtocol {
 			// Keep endpoint idempotent; report unloaded status either way.
 		}
 		let status = await currentStatus()
-		let selection = currentSelection(from: status)
-		let payload = unloadedModelStatusResponse(selection: selection, detail: qwenStatusDetail(status: status))
+		let context = statusContext(from: status)
+		let payload = unloadedModelStatusResponse(
+			active: context.active,
+			requested: context.requested,
+			strictLoad: context.strictLoad,
+			fallbackApplied: context.fallbackApplied,
+			detail: qwenStatusDetail(status: status)
+		)
 		return .ok(.init(body: .json(payload)))
+	}
+
+	func customVoiceSpeakersCustomVoiceSpeakersGet(_ input: TTMOpenAPI.Operations.CustomVoiceSpeakersCustomVoiceSpeakersGet.Input) async throws -> TTMOpenAPI.Operations.CustomVoiceSpeakersCustomVoiceSpeakersGet.Output {
+		let requestedModel = input.query.modelId.flatMap(qwenModelIdentifier(from:)) ?? .customVoice0_6B
+		guard requestedModel.mode == .customVoice else {
+			return .badRequest
+		}
+		guard let qwenService else {
+			return .serviceUnavailable
+		}
+
+		do {
+			let speakers = try await qwenService.supportedCustomVoiceSpeakers(modelID: requestedModel)
+			let payload = Components.Schemas.CustomVoiceSpeakersResponse(
+				modelId: modelIDSchema(from: requestedModel),
+				speakers: speakers
+			)
+			return .ok(.init(body: .json(payload)))
+		} catch {
+			logger.error("Failed to list custom voice speakers", metadata: ["error": "\(String(describing: error))"])
+			return .serviceUnavailable
+		}
 	}
 
 	func synthesizeVoiceDesignSynthesizeVoiceDesignPost(_ input: TTMOpenAPI.Operations.SynthesizeVoiceDesignSynthesizeVoiceDesignPost.Input) async throws -> TTMOpenAPI.Operations.SynthesizeVoiceDesignSynthesizeVoiceDesignPost.Output {
@@ -217,23 +300,44 @@ struct TTMApi: APIProtocol {
 		}
 	}
 
-	private func unloadedModelStatusResponse(selection: QwenModelSelection, detail: String) -> Components.Schemas.ModelStatusResponse {
-		modelStatusResponse(selection: selection, modelLoaded: false, ready: false, detail: detail)
+	private func unloadedModelStatusResponse(
+		active: QwenModelSelection,
+		requested: QwenModelSelection,
+		strictLoad: Bool,
+		fallbackApplied: Bool,
+		detail: String
+	) -> Components.Schemas.ModelStatusResponse {
+		modelStatusResponse(
+			active: active,
+			requested: requested,
+			strictLoad: strictLoad,
+			fallbackApplied: fallbackApplied,
+			modelLoaded: false,
+			ready: false,
+			detail: detail
+		)
 	}
 
 	private func modelStatusResponse(
-		selection: QwenModelSelection,
+		active: QwenModelSelection,
+		requested: QwenModelSelection,
+		strictLoad: Bool,
+		fallbackApplied: Bool,
 		modelLoaded: Bool,
 		ready: Bool,
 		detail: String
 	) -> Components.Schemas.ModelStatusResponse {
 		.init(
-			mode: modelModeSchema(from: selection.mode),
-			modelId: modelIDSchema(from: selection.modelID),
+			mode: modelModeSchema(from: active.mode),
+			modelId: modelIDSchema(from: active.modelID),
+			requestedMode: modelModeSchema(from: requested.mode),
+			requestedModelId: modelIDSchema(from: requested.modelID),
 			loaded: modelLoaded,
 			loading: false,
 			qwenTtsAvailable: qwenService != nil,
 			ready: ready,
+			strictLoad: strictLoad,
+			fallbackApplied: fallbackApplied,
 			detail: detail
 		)
 	}
@@ -254,6 +358,10 @@ struct TTMApi: APIProtocol {
 				modelLoaded: false,
 				activeMode: nil,
 				activeModelID: nil,
+				requestedMode: nil,
+				requestedModelID: nil,
+				strictLoad: false,
+				fallbackApplied: false,
 				ready: false,
 				lastError: nil
 			)
@@ -261,11 +369,13 @@ struct TTMApi: APIProtocol {
 		return await qwenService.status()
 	}
 
-	private func currentSelection(from status: TTMPythonBridgeStatus) -> QwenModelSelection {
-		if let activeModel = status.activeModelID {
-			return .init(mode: status.activeMode ?? activeModel.mode, modelID: activeModel)
-		}
-		return .defaultVoiceDesign
+	private func statusContext(
+		from status: TTMPythonBridgeStatus,
+		fallbackRequested: QwenModelSelection? = nil
+	) -> (active: QwenModelSelection, requested: QwenModelSelection, strictLoad: Bool, fallbackApplied: Bool) {
+		let active = status.activeModelID.map { .init(mode: status.activeMode ?? $0.mode, modelID: $0) } ?? QwenModelSelection.defaultVoiceDesign
+		let requested = status.requestedModelID.map { .init(mode: status.requestedMode ?? $0.mode, modelID: $0) } ?? fallbackRequested ?? active
+		return (active, requested, status.strictLoad, status.fallbackApplied)
 	}
 
 	private func qwenStatusDetail(status: TTMPythonBridgeStatus) -> String {

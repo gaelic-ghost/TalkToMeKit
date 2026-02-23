@@ -11,6 +11,20 @@ import ServiceLifecycle
 import TTMPythonBridge
 import TTMPythonRuntimeBundle
 
+public struct TTMModelInventoryItem: Sendable, Equatable {
+	public var mode: QwenSynthesisMode
+	public var modelID: QwenModelIdentifier
+	public var available: Bool
+	public var localPath: String
+
+	public init(mode: QwenSynthesisMode, modelID: QwenModelIdentifier, available: Bool, localPath: String) {
+		self.mode = mode
+		self.modelID = modelID
+		self.available = available
+		self.localPath = localPath
+	}
+}
+
 public struct TTMQwenServiceConfiguration: Sendable {
 	public var runtime: PythonRuntimeConfiguration
 	public var startupSelection: QwenModelSelection
@@ -84,10 +98,12 @@ public struct TTMQwenServiceConfiguration: Sendable {
 public struct TTMQwenService: Service {
 	private let bridge: TTMPythonBridge
 	private let group: ServiceGroup
+	private let runtimeRoot: URL
 
 	public init(configuration: TTMQwenServiceConfiguration, logger: Logger = .init(label: "TalkToMeKit.TTMQwenService")) {
 		let bridge = TTMPythonBridge()
 		self.bridge = bridge
+		runtimeRoot = URL(fileURLWithPath: configuration.runtime.pythonHome, isDirectory: true)
 		let runtimeService = QwenPythonRuntimeService(
 			bridge: bridge,
 			configuration: configuration.runtime,
@@ -121,12 +137,33 @@ public struct TTMQwenService: Service {
 		await bridge.status()
 	}
 
-	public func loadModel(selection: QwenModelSelection) async throws -> Bool {
-		try await bridge.loadModel(selection: selection)
+	public func loadModel(selection: QwenModelSelection, strict: Bool = false) async throws -> Bool {
+		try await bridge.loadModel(selection: selection, strict: strict)
 	}
 
 	public func unloadModel() async throws -> Bool {
 		try await bridge.unloadModel()
+	}
+
+	public func supportedCustomVoiceSpeakers(modelID: QwenModelIdentifier) async throws -> [String] {
+		try await bridge.supportedSpeakers(selection: .init(mode: .customVoice, modelID: modelID))
+	}
+
+	public func modelInventory() async -> [TTMModelInventoryItem] {
+		let root = runtimeRoot
+		let fileManager = FileManager.default
+		return QwenModelIdentifier.allCases.map { modelID in
+			let localPath = root
+				.appendingPathComponent("models")
+				.appendingPathComponent(modelID.rawValue.split(separator: "/").last.map(String.init) ?? "")
+				.path
+			return .init(
+				mode: modelID.mode,
+				modelID: modelID,
+				available: fileManager.fileExists(atPath: localPath),
+				localPath: localPath
+			)
+		}
 	}
 }
 
@@ -138,7 +175,7 @@ private struct QwenPythonRuntimeService: Service {
 	func run() async throws {
 		try await bridge.initialize(configuration: configuration)
 		try await bridge.importQwenModule()
-		let loaded = try await bridge.loadModel(selection: startupSelection)
+		let loaded = try await bridge.loadModel(selection: startupSelection, strict: false)
 		guard loaded else {
 			throw TTMPythonBridgeError.pythonCallFailed(function: "load_model")
 		}

@@ -243,7 +243,7 @@ def _resolve_model(mode: str, model_id: Optional[str]) -> str:
     return requested
 
 
-def _candidates_for_mode(mode: str, requested_model: str) -> list[tuple[str, str]]:
+def _candidates_for_mode(mode: str, requested_model: str, strict: bool = False) -> list[tuple[str, str]]:
     ordered: list[tuple[str, str]] = []
 
     same_mode = MODEL_REGISTRY.get(mode, [])
@@ -254,7 +254,7 @@ def _candidates_for_mode(mode: str, requested_model: str) -> list[tuple[str, str
         if model_id != requested_model:
             ordered.append((mode, model_id))
 
-    if _ALLOW_CROSS_MODE_FALLBACK:
+    if not strict and _ALLOW_CROSS_MODE_FALLBACK:
         for fallback_mode, model_ids in MODEL_REGISTRY.items():
             if fallback_mode == mode:
                 continue
@@ -273,11 +273,13 @@ def _candidates_for_mode(mode: str, requested_model: str) -> list[tuple[str, str
     return unique
 
 
-def load_model(mode: Optional[str] = None, model_id: Optional[str] = None) -> bool:
+def load_model(mode: Optional[str] = None, model_id: Optional[str] = None, strict: Optional[str] = None) -> bool:
     global _MODEL_LOADED
     global _QWEN_MODEL
     global _ACTIVE_MODE
     global _ACTIVE_MODEL_ID
+
+    strict_load = strict == "1" if strict is not None else False
 
     resolved_mode = _resolve_mode(mode)
     resolved_model = _resolve_model(resolved_mode, model_id)
@@ -286,7 +288,7 @@ def load_model(mode: Optional[str] = None, model_id: Optional[str] = None) -> bo
         _debug("model already loaded")
         return True
 
-    for candidate_mode, candidate_model in _candidates_for_mode(resolved_mode, resolved_model):
+    for candidate_mode, candidate_model in _candidates_for_mode(resolved_mode, resolved_model, strict=strict_load):
         started_at = time.monotonic()
         model = _create_model(candidate_model)
         elapsed = time.monotonic() - started_at
@@ -328,7 +330,7 @@ def is_model_loaded() -> bool:
 def _ensure_loaded(mode: str, model_id: str) -> bool:
     if _MODEL_LOADED and _QWEN_MODEL is not None and _ACTIVE_MODE == mode and _ACTIVE_MODEL_ID == model_id:
         return True
-    return load_model(mode=mode, model_id=model_id)
+    return load_model(mode=mode, model_id=model_id, strict="0")
 
 
 def _generate_voice_design(text: str, instruct: str, language: str) -> Optional[bytes]:
@@ -370,6 +372,29 @@ def _generate_custom_voice(text: str, speaker: str, language: str) -> Optional[b
     if wav_payload is not None:
         return _to_wav_bytes(_normalize_samples(wav_payload), sr)
     return None
+
+
+def get_supported_speakers(mode: Optional[str] = None, model_id: Optional[str] = None) -> list[str]:
+    resolved_mode = _resolve_mode(mode)
+    if resolved_mode != "custom_voice":
+        return []
+    resolved_model = _resolve_model(resolved_mode, model_id)
+    if not load_model(mode=resolved_mode, model_id=resolved_model, strict="1"):
+        return []
+    if _QWEN_MODEL is None:
+        return []
+    get_speakers = getattr(_QWEN_MODEL, "get_supported_speakers", None)
+    if not callable(get_speakers):
+        return []
+    try:
+        speakers = get_speakers() or []
+    except Exception:
+        return []
+    return [str(speaker) for speaker in speakers if str(speaker)]
+
+
+def get_supported_speakers_csv(mode: Optional[str] = None, model_id: Optional[str] = None) -> str:
+    return ",".join(get_supported_speakers(mode=mode, model_id=model_id))
 
 
 def synthesize_voice_design(text: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes:

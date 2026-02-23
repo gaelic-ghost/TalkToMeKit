@@ -148,6 +148,10 @@ public struct TTMPythonBridgeStatus: Sendable, Equatable {
 	public var modelLoaded: Bool
 	public var activeMode: QwenSynthesisMode?
 	public var activeModelID: QwenModelIdentifier?
+	public var requestedMode: QwenSynthesisMode?
+	public var requestedModelID: QwenModelIdentifier?
+	public var strictLoad: Bool
+	public var fallbackApplied: Bool
 	public var ready: Bool
 	public var lastError: String?
 
@@ -157,6 +161,10 @@ public struct TTMPythonBridgeStatus: Sendable, Equatable {
 		modelLoaded: Bool,
 		activeMode: QwenSynthesisMode?,
 		activeModelID: QwenModelIdentifier?,
+		requestedMode: QwenSynthesisMode?,
+		requestedModelID: QwenModelIdentifier?,
+		strictLoad: Bool,
+		fallbackApplied: Bool,
 		ready: Bool,
 		lastError: String?
 	) {
@@ -165,6 +173,10 @@ public struct TTMPythonBridgeStatus: Sendable, Equatable {
 		self.modelLoaded = modelLoaded
 		self.activeMode = activeMode
 		self.activeModelID = activeModelID
+		self.requestedMode = requestedMode
+		self.requestedModelID = requestedModelID
+		self.strictLoad = strictLoad
+		self.fallbackApplied = fallbackApplied
 		self.ready = ready
 		self.lastError = lastError
 	}
@@ -190,6 +202,9 @@ public actor TTMPythonBridge {
 	private var qwenModuleLoaded = false
 	private var modelLoaded = false
 	private var activeSelection: QwenModelSelection?
+	private var requestedSelection: QwenModelSelection?
+	private var lastStrictLoad = false
+	private var lastFallbackApplied = false
 	private var lastError: String?
 	private let pythonExecutionQueue = DispatchQueue(label: "TalkToMeKit.TTMPythonBridge.CPython")
 
@@ -206,6 +221,10 @@ public actor TTMPythonBridge {
 			modelLoaded: modelLoaded,
 			activeMode: activeSelection?.mode,
 			activeModelID: activeSelection?.modelID,
+			requestedMode: requestedSelection?.mode,
+			requestedModelID: requestedSelection?.modelID,
+			strictLoad: lastStrictLoad,
+			fallbackApplied: lastFallbackApplied,
 			ready: isReady,
 			lastError: lastError
 		)
@@ -226,6 +245,9 @@ public actor TTMPythonBridge {
 			qwenModuleLoaded = false
 			modelLoaded = false
 			activeSelection = nil
+			requestedSelection = nil
+			lastStrictLoad = false
+			lastFallbackApplied = false
 			lastError = nil
 		} catch {
 			lastError = String(describing: error)
@@ -260,7 +282,7 @@ public actor TTMPythonBridge {
 		}
 		let requestedSelection = QwenModelSelection(mode: request.mode, modelID: request.modelID)
 		if activeSelection != requestedSelection || !modelLoaded {
-			let loaded = try await loadModel(selection: requestedSelection)
+			let loaded = try await loadModel(selection: requestedSelection, strict: false)
 			guard loaded else {
 				throw TTMPythonBridgeError.modelNotLoaded
 			}
@@ -282,16 +304,24 @@ public actor TTMPythonBridge {
 		modelLoaded
 	}
 
-	public func loadModel(selection: QwenModelSelection) async throws -> Bool {
+	public func loadModel(selection: QwenModelSelection, strict: Bool = false) async throws -> Bool {
 		guard let runtime, let configuration else {
 			throw TTMPythonBridgeError.notInitialized
 		}
 		guard qwenModuleLoaded else {
 			throw TTMPythonBridgeError.qwenModuleNotLoaded
 		}
-		let orderedSelections = QwenModelIdentifier
-			.fallbackOrder(for: selection.modelID)
-			.map { QwenModelSelection(mode: $0.mode, modelID: $0) }
+		requestedSelection = selection
+		lastStrictLoad = strict
+		lastFallbackApplied = false
+		let orderedSelections: [QwenModelSelection]
+		if strict {
+			orderedSelections = [selection]
+		} else {
+			orderedSelections = QwenModelIdentifier
+				.fallbackOrder(for: selection.modelID)
+				.map { QwenModelSelection(mode: $0.mode, modelID: $0) }
+		}
 
 		for candidate in orderedSelections {
 			guard candidate.modelID.mode == candidate.mode else {
@@ -302,12 +332,13 @@ public actor TTMPythonBridge {
 					try runtime.callBooleanFunction(
 						moduleName: configuration.qwenModule,
 						functionName: "load_model",
-						stringArguments: [candidate.mode.rawValue, candidate.modelID.rawValue]
+						stringArguments: [candidate.mode.rawValue, candidate.modelID.rawValue, strict ? "1" : "0"]
 					)
 				}
 				if loaded {
 					modelLoaded = true
 					activeSelection = candidate
+					lastFallbackApplied = candidate != selection
 					lastError = nil
 					return true
 				}
@@ -318,7 +349,38 @@ public actor TTMPythonBridge {
 		}
 		modelLoaded = false
 		activeSelection = nil
+		lastFallbackApplied = false
 		return false
+	}
+
+	public func supportedSpeakers(selection: QwenModelSelection) async throws -> [String] {
+		guard selection.mode == .customVoice else {
+			return []
+		}
+		guard let runtime, let configuration else {
+			throw TTMPythonBridgeError.notInitialized
+		}
+		guard qwenModuleLoaded else {
+			throw TTMPythonBridgeError.qwenModuleNotLoaded
+		}
+
+		_ = try await loadModel(selection: selection, strict: true)
+		let csv = try await blockingCall {
+			try runtime.callStringFunction(
+				moduleName: configuration.qwenModule,
+				functionName: "get_supported_speakers_csv",
+				stringArguments: [selection.mode.rawValue, selection.modelID.rawValue]
+			)
+		}
+		let speakers = csv
+			.split(separator: ",")
+			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+			.filter { !$0.isEmpty }
+		return speakers
+	}
+
+	public func runtimeRootPath() -> String? {
+		configuration?.pythonHome
 	}
 
 	public func unloadModel() async throws -> Bool {
@@ -352,6 +414,9 @@ public actor TTMPythonBridge {
 		qwenModuleLoaded = false
 		modelLoaded = false
 		activeSelection = nil
+		requestedSelection = nil
+		lastStrictLoad = false
+		lastFallbackApplied = false
 		lastError = nil
 	}
 
@@ -386,6 +451,7 @@ private final class CPythonRuntime: @unchecked Sendable {
 	private typealias PyObjectCallObjectFn = @convention(c) (PyObject?, PyObject?) -> PyObject?
 	private typealias PyObjectIsTrueFn = @convention(c) (PyObject?) -> Int32
 	private typealias PyBytesAsStringAndSizeFn = @convention(c) (PyObject?, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?, UnsafeMutablePointer<Int>?) -> Int32
+	private typealias PyUnicodeAsUTF8Fn = @convention(c) (PyObject?) -> UnsafePointer<CChar>?
 	private typealias PyDecRefFn = @convention(c) (PyObject?) -> Void
 	private typealias PyErrPrintExFn = @convention(c) (Int32) -> Void
 	private typealias PyGILStateEnsureFn = @convention(c) () -> PyGILStateState
@@ -407,6 +473,7 @@ private final class CPythonRuntime: @unchecked Sendable {
 	private let pyObjectCallObject: PyObjectCallObjectFn
 	private let pyObjectIsTrue: PyObjectIsTrueFn
 	private let pyBytesAsStringAndSize: PyBytesAsStringAndSizeFn
+	private let pyUnicodeAsUTF8: PyUnicodeAsUTF8Fn
 	private let pyDecRef: PyDecRefFn
 	private let pyErrPrintEx: PyErrPrintExFn
 	private let pyGILStateEnsure: PyGILStateEnsureFn
@@ -434,6 +501,7 @@ private final class CPythonRuntime: @unchecked Sendable {
 		pyObjectCallObject = try Self.loadSymbol(handle: handle, "PyObject_CallObject", as: PyObjectCallObjectFn.self)
 		pyObjectIsTrue = try Self.loadSymbol(handle: handle, "PyObject_IsTrue", as: PyObjectIsTrueFn.self)
 		pyBytesAsStringAndSize = try Self.loadSymbol(handle: handle, "PyBytes_AsStringAndSize", as: PyBytesAsStringAndSizeFn.self)
+		pyUnicodeAsUTF8 = try Self.loadSymbol(handle: handle, "PyUnicode_AsUTF8", as: PyUnicodeAsUTF8Fn.self)
 		pyDecRef = try Self.loadSymbol(handle: handle, "Py_DecRef", as: PyDecRefFn.self)
 		pyErrPrintEx = try Self.loadSymbol(handle: handle, "PyErr_PrintEx", as: PyErrPrintExFn.self)
 		pyGILStateEnsure = try Self.loadSymbol(handle: handle, "PyGILState_Ensure", as: PyGILStateEnsureFn.self)
@@ -454,6 +522,12 @@ private final class CPythonRuntime: @unchecked Sendable {
 	}
 
 	func initialize() throws {
+		// When finalization is disabled (default), CPython may already be process-initialized
+		// by a prior bridge instance. Re-running PyEval_SaveThread in that state can crash.
+		guard pyIsInitialized() == 0 else {
+			releasedThreadState = nil
+			return
+		}
 		pyInitializeEx(0)
 		guard pyIsInitialized() != 0 else {
 			throw TTMPythonBridgeError.pythonInitializeFailed
@@ -636,6 +710,68 @@ private final class CPythonRuntime: @unchecked Sendable {
 			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 		return truthy != 0
+	}
+
+	func callStringFunction(moduleName: String, functionName: String, stringArguments: [String] = []) throws -> String {
+		let state = pyGILStateEnsure()
+		defer { pyGILStateRelease(state) }
+
+		let module = moduleName.withCString { pyImportImportModule($0) }
+		guard let module else {
+			pyErrPrintEx(0)
+			throw TTMPythonBridgeError.qwenModuleImportFailed(module: moduleName)
+		}
+		defer { pyDecRef(module) }
+
+		let function = functionName.withCString { pyObjectGetAttrString(module, $0) }
+		guard let function else {
+			pyErrPrintEx(0)
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+		defer { pyDecRef(function) }
+
+		guard pyCallableCheck(function) != 0 else {
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+
+		var args: PyObject?
+		if !stringArguments.isEmpty {
+			guard let tuple = pyTupleNew(stringArguments.count) else {
+				pyErrPrintEx(0)
+				throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+			}
+			for (index, argument) in stringArguments.enumerated() {
+				guard let argObject = argument.withCString({ pyUnicodeFromString($0) }) else {
+					pyErrPrintEx(0)
+					pyDecRef(tuple)
+					throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+				}
+				guard pyTupleSetItem(tuple, index, argObject) == 0 else {
+					pyErrPrintEx(0)
+					pyDecRef(argObject)
+					pyDecRef(tuple)
+					throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+				}
+			}
+			args = tuple
+		}
+		defer {
+			if let args {
+				pyDecRef(args)
+			}
+		}
+
+		guard let result = pyObjectCallObject(function, args) else {
+			pyErrPrintEx(0)
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+		defer { pyDecRef(result) }
+
+		guard let utf8 = pyUnicodeAsUTF8(result) else {
+			pyErrPrintEx(0)
+			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+		}
+		return String(cString: utf8)
 	}
 
 	func shutdown() {

@@ -90,6 +90,10 @@ struct TTMServerMain: AsyncParsableCommand {
 				pythonVersion: pythonVersion,
 				startupSelection: startupSelection
 			)
+			logModelPreflight(
+				runtimeRoot: URL(fileURLWithPath: configuration.runtime.pythonHome, isDirectory: true),
+				logger: logger
+			)
 			logger.info(
 				"Qwen3-TTS service enabled (explicit runtime path)",
 				metadata: [
@@ -105,6 +109,10 @@ struct TTMServerMain: AsyncParsableCommand {
 			pythonVersion: pythonVersion,
 			startupSelection: startupSelection
 		) {
+			logModelPreflight(
+				runtimeRoot: URL(fileURLWithPath: configuration.runtime.pythonHome, isDirectory: true),
+				logger: logger
+			)
 			logger.info(
 				"Qwen3-TTS service enabled (bundled runtime autodetected)",
 				metadata: [
@@ -118,4 +126,32 @@ struct TTMServerMain: AsyncParsableCommand {
 		logger.info("Qwen3-TTS service disabled; pass --python-runtime-root or bundle a runtime in TTMPythonRuntimeBundle Resources/Runtime.")
 		return nil
 	}
-}
+
+	private func logModelPreflight(runtimeRoot: URL, logger: Logger) {
+		let modelsRoot = runtimeRoot.appendingPathComponent("models", isDirectory: true)
+		let fileManager = FileManager.default
+		let inventory = QwenModelIdentifier.allCases.map { modelID in
+			let localPath = modelsRoot.appendingPathComponent(modelID.rawValue.split(separator: "/").last.map(String.init) ?? "")
+			return (modelID, localPath.path, fileManager.fileExists(atPath: localPath.path))
+		}
+		let available = inventory.filter(\.2).map(\.0.rawValue)
+		let missing = inventory.filter { !$0.2 }.map(\.0.rawValue)
+
+			logger.info(
+				"Runtime model preflight",
+				metadata: [
+					"modelsRoot": "\(modelsRoot.path)",
+					"availableModels": "\(available.joined(separator: ","))",
+					"missingModels": "\(missing.joined(separator: ","))",
+				]
+			)
+			if !missing.isEmpty {
+				logger.warning(
+					"Some staged models are missing; strict model loads may fail",
+					metadata: [
+						"missingModels": "\(missing.joined(separator: ","))",
+					]
+				)
+			}
+		}
+	}
