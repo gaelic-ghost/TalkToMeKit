@@ -26,16 +26,30 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 
 ## Stage bundled runtime
 
-Stage runtime only:
+Preferred: use the SwiftPM command plugin.
+
+Stage runtime only (safe default):
+
+```bash
+swift package plugin stage-python-runtime
+```
+
+Stage runtime only with explicit python:
+
+```bash
+swift package plugin stage-python-runtime -- --python python3.11 --no-install-qwen
+```
+
+Stage runtime + install Qwen deps + download model (network-enabled):
+
+```bash
+swift package plugin stage-python-runtime -- --allow-network --install-qwen --python python3.11
+```
+
+Direct script usage is still available:
 
 ```bash
 ./scripts/stage_python_runtime.sh --python python3.11 --no-install-qwen
-```
-
-Stage runtime + install Qwen deps + download model:
-
-```bash
-./scripts/stage_python_runtime.sh --python python3.11 --install-qwen
 ```
 
 Staged location:
@@ -46,7 +60,7 @@ Note:
 
 - `Runtime/current` is intentionally git-ignored and not committed.
 - Each developer/CI environment should stage it locally with
-  `scripts/stage_python_runtime.sh`.
+  `swift package plugin stage-python-runtime`.
 
 ## Run server with bundled runtime
 

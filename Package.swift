@@ -64,6 +64,9 @@ let package = Package(
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]
 		),
+		.executableTarget(
+			name: "TTMStagePythonRuntimeTool"
+		),
 		.target(
 			name: "TTMPythonBridge",
 			resources: [
@@ -82,6 +85,21 @@ let package = Package(
 			name: "TTMPythonRuntimeBundle",
 			resources: [
 				.copy("Resources/Runtime"),
+			]
+		),
+		.plugin(
+			name: "StagePythonRuntimePlugin",
+			capability: .command(
+				intent: .custom(
+					verb: "stage-python-runtime",
+					description: "Stage local Python runtime/model assets for TalkToMeKit development."
+				),
+				permissions: [
+					.writeToPackageDirectory(reason: "Stage runtime assets under Sources/TTMPythonRuntimeBundle/Resources/Runtime/current."),
+				]
+			),
+			dependencies: [
+				.target(name: "TTMStagePythonRuntimeTool"),
 			]
 		),
     ]
