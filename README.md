@@ -320,6 +320,28 @@ swift build
 swift test
 ```
 
+## Embedding checklist (macOS apps)
+
+When embedding `TalkToMeService` into a macOS app, the following items should be explicitly accounted for:
+
+- Scripts
+  - Runtime staging script in this repo: `scripts/stage_python_runtime.sh`
+  - App-side copy/sign script (in example app repo): `Scripts/stage_python_runtime.sh`
+- Build settings (app project)
+  - `ENABLE_USER_SCRIPT_SANDBOXING = NO` when app build scripts need sibling checkout access (for example `../TalkToMeKit/...`).
+  - `ENABLE_HARDENED_RUNTIME = YES` for production hardening.
+  - `ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES` only if runtime/model download may happen at runtime; disable for offline-only staged deployments.
+- Sandbox caveats
+  - User script sandbox can block reading runtime assets outside project root.
+  - Pre-stage runtime/models in CI or local dev to avoid runtime network dependency.
+- Hardened runtime caveats
+  - All copied runtime Mach-O artifacts (`.dylib`, `.so`, and executable tools like `sox`) must be signed in the app bundle.
+  - Prefer Xcode-provided signing identity values (`EXPANDED_CODE_SIGN_IDENTITY`) over hardcoded identities.
+
+Security note:
+- The example app's copy/sign script does not include secrets; it uses Xcode-provided signing identity context at build time.
+- Avoid publishing full CI logs that include detailed local code-signing identity metadata unless needed.
+
 ## Stability smoke
 
 Run both stability scenarios (mode-switch load test + cold-start VoiceDesign test):
