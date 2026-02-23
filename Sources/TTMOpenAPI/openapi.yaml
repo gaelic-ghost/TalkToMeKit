@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: TalkToMePy Service
   description: A local TTS service for Qwen3-TTS VoiceDesign and CustomVoice modes.
-  version: 0.3.0
+  version: 0.5.0
 paths:
   /health:
     get:

@@ -24,7 +24,7 @@ struct TTMApi: APIProtocol {
 		_ = input
 		let payload = Components.Schemas.VersionResponse(
 			service: "TalkToMeKit",
-			apiVersion: "0.3.0",
+			apiVersion: "0.5.0",
 			openapiVersion: "3.1.0"
 		)
 		return .ok(.init(body: .json(payload)))
