@@ -5,7 +5,7 @@ This module is imported by the in-process CPython bridge and provides:
     unload_model() -> bool
     is_model_loaded() -> bool
     synthesize_voice_design(text: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes
-    synthesize_custom_voice(text: str, speaker: str, language: str, sample_rate: int, model_id: str) -> bytes
+    synthesize_custom_voice(text: str, speaker: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes
 """
 
 from __future__ import annotations
@@ -350,7 +350,7 @@ def _generate_voice_design(text: str, instruct: str, language: str) -> Optional[
     return None
 
 
-def _generate_custom_voice(text: str, speaker: str, language: str) -> Optional[bytes]:
+def _generate_custom_voice(text: str, speaker: str, instruct: Optional[str], language: str) -> Optional[bytes]:
     if _QWEN_MODEL is None:
         return None
 
@@ -361,11 +361,20 @@ def _generate_custom_voice(text: str, speaker: str, language: str) -> Optional[b
         if supported and requested_speaker not in supported:
             requested_speaker = supported[0]
 
-    output = _QWEN_MODEL.generate_custom_voice(
-        text=text,
-        language=language,
-        speaker=requested_speaker,
-    )
+    kwargs = {
+        "text": text,
+        "language": language,
+        "speaker": requested_speaker,
+    }
+    if instruct:
+        kwargs["instruct"] = instruct
+
+    try:
+        output = _QWEN_MODEL.generate_custom_voice(**kwargs)
+    except TypeError:
+        # Runtime compatibility fallback for older qwen_tts builds.
+        kwargs.pop("instruct", None)
+        output = _QWEN_MODEL.generate_custom_voice(**kwargs)
     wav_payload, sr = _extract_audio_and_sample_rate(output, 24_000)
     if isinstance(wav_payload, (bytes, bytearray, memoryview)):
         return bytes(wav_payload)
@@ -418,7 +427,7 @@ def synthesize_voice_design(text: str, instruct: str, language: str, sample_rate
     raise RuntimeError("Qwen3-TTS VoiceDesign synthesis failed")
 
 
-def synthesize_custom_voice(text: str, speaker: str, language: str, sample_rate: int, model_id: str) -> bytes:
+def synthesize_custom_voice(text: str, speaker: str, instruct: str, language: str, sample_rate: int, model_id: str) -> bytes:
     if not text.strip():
         raise ValueError("text must not be empty")
 
@@ -429,7 +438,12 @@ def synthesize_custom_voice(text: str, speaker: str, language: str, sample_rate:
     if not _ensure_loaded(mode=resolved_mode, model_id=resolved_model):
         raise RuntimeError("Qwen3-TTS runtime unavailable: failed to load model")
 
-    audio = _generate_custom_voice(text=text, speaker=speaker or DEFAULT_SPEAKER, language=resolved_language)
+    audio = _generate_custom_voice(
+        text=text,
+        speaker=speaker or DEFAULT_SPEAKER,
+        instruct=instruct,
+        language=resolved_language,
+    )
     if audio is not None:
         return audio
 

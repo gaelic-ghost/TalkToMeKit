@@ -213,6 +213,7 @@ let wav = try await runtime.synthesize(
 	.init(
 		text: "Hello from app",
 		voice: "ryan", // speaker for custom_voice, instruction for voice_design
+		instruct: "Cheerful with slightly faster pacing", // optional for custom_voice
 		mode: .customVoice, // or .voiceDesign
 		modelID: .customVoice0_6B, // or .customVoice1_7B / .voiceDesign1_7B
 		language: "English"
@@ -246,7 +247,7 @@ curl -sS -o /tmp/tts-vd.wav \
   http://127.0.0.1:8091/synthesize/voice-design
 curl -sS -o /tmp/tts-cv.wav \
   -H 'content-type: application/json' \
-  -d '{"text":"Hello from TalkToMeKit","speaker":"ryan","language":"English","format":"wav"}' \
+  -d '{"text":"Hello from TalkToMeKit","speaker":"ryan","instruct":"Cheerful and energetic","language":"English","format":"wav"}' \
   http://127.0.0.1:8091/synthesize/custom-voice
 curl -sS \
   -H 'content-type: application/json' \

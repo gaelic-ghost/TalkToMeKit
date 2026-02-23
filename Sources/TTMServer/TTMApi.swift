@@ -261,12 +261,13 @@ struct TTMApi: APIProtocol {
 		guard modelID.mode == .customVoice else {
 			return .badRequest
 		}
-		let qwenRequest = QwenSynthesisRequest.customVoice(
-			text: request.text,
-			speaker: request.speaker,
-			language: request.language,
-			modelID: modelID
-		)
+			let qwenRequest = QwenSynthesisRequest.customVoice(
+				text: request.text,
+				speaker: request.speaker,
+				instruct: request.instruct,
+				language: request.language,
+				modelID: modelID
+			)
 
 		do {
 			let wavBytes = try await synthesizeWithTimeout(request: qwenRequest, qwenService: qwenService)

@@ -20,6 +20,7 @@ public enum TTMAssetPreparationState: Sendable, Equatable {
 public struct TTMServiceSynthesizeRequest: Sendable {
 	public var text: String
 	public var voice: String?
+	public var instruct: String?
 	public var mode: QwenSynthesisMode
 	public var modelID: QwenModelIdentifier?
 	public var language: String
@@ -28,6 +29,7 @@ public struct TTMServiceSynthesizeRequest: Sendable {
 	public init(
 		text: String,
 		voice: String? = nil,
+		instruct: String? = nil,
 		mode: QwenSynthesisMode = .customVoice,
 		modelID: QwenModelIdentifier? = nil,
 		language: String = "English",
@@ -35,6 +37,7 @@ public struct TTMServiceSynthesizeRequest: Sendable {
 	) {
 		self.text = text
 		self.voice = voice
+		self.instruct = instruct
 		self.mode = mode
 		self.modelID = modelID
 		self.language = language
@@ -260,24 +263,25 @@ public actor TTMServiceRuntime {
 
 		let resolvedModelID = request.modelID ?? QwenModelIdentifier.defaultModel(for: request.mode)
 		let qwenRequest: QwenSynthesisRequest
-		switch request.mode {
-		case .voiceDesign:
-			qwenRequest = .voiceDesign(
-				text: request.text,
-				instruct: request.voice ?? "",
-				language: request.language,
-				modelID: resolvedModelID,
-				sampleRate: request.sampleRate
-			)
-		case .customVoice:
-			qwenRequest = .customVoice(
-				text: request.text,
-				speaker: request.voice ?? "ryan",
-				language: request.language,
-				modelID: resolvedModelID,
-				sampleRate: request.sampleRate
-			)
-		}
+			switch request.mode {
+			case .voiceDesign:
+				qwenRequest = .voiceDesign(
+					text: request.text,
+					instruct: request.instruct ?? request.voice ?? "",
+					language: request.language,
+					modelID: resolvedModelID,
+					sampleRate: request.sampleRate
+				)
+			case .customVoice:
+				qwenRequest = .customVoice(
+					text: request.text,
+					speaker: request.voice ?? "ryan",
+					instruct: request.instruct,
+					language: request.language,
+					modelID: resolvedModelID,
+					sampleRate: request.sampleRate
+				)
+			}
 
 		return try await service.synthesize(qwenRequest)
 	}

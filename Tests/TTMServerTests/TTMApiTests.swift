@@ -72,6 +72,10 @@ private actor FakeQwenService: TTMQwenServing {
 		inventoryItems
 	}
 
+	func capturedSynthesisRequest() -> QwenSynthesisRequest? {
+		lastSynthesisRequest
+	}
+
 	func configureReady(_ value: Bool) {
 		ready = value
 	}
@@ -502,10 +506,13 @@ struct TTMApiTests {
 		let request = Components.Schemas.SynthesizeCustomVoiceRequest(
 			text: "hello",
 			speaker: "ryan",
+			instruct: "cheerful and energetic",
 			language: "English",
 			modelId: .qwenQwen3TTS12Hz1_7BCustomVoice
 		)
 		let output = try await api.synthesizeCustomVoiceSynthesizeCustomVoicePost(.init(body: .json(request)))
 		_ = try output.ok.body.audioWav
+		let captured = await fake.capturedSynthesisRequest()
+		#expect(captured?.instruct == "cheerful and energetic")
 	}
 }

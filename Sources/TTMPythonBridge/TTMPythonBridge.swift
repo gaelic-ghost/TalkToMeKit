@@ -35,6 +35,7 @@ public struct QwenSynthesisRequest: Sendable {
 	public var modelID: QwenModelIdentifier
 	public var language: String
 	public var voice: String
+	public var instruct: String?
 	public var sampleRate: Int
 
 	public init(
@@ -43,6 +44,7 @@ public struct QwenSynthesisRequest: Sendable {
 		modelID: QwenModelIdentifier,
 		language: String,
 		voice: String,
+		instruct: String? = nil,
 		sampleRate: Int = 24_000
 	) {
 		self.text = text
@@ -50,6 +52,7 @@ public struct QwenSynthesisRequest: Sendable {
 		self.modelID = modelID
 		self.language = language
 		self.voice = voice
+		self.instruct = instruct
 		self.sampleRate = sampleRate
 	}
 
@@ -60,32 +63,35 @@ public struct QwenSynthesisRequest: Sendable {
 		modelID: QwenModelIdentifier = .voiceDesign1_7B,
 		sampleRate: Int = 24_000
 	) -> Self {
-		.init(
-			text: text,
-			mode: .voiceDesign,
-			modelID: modelID,
-			language: language,
-			voice: instruct,
-			sampleRate: sampleRate
-		)
-	}
+			.init(
+				text: text,
+				mode: .voiceDesign,
+				modelID: modelID,
+				language: language,
+				voice: instruct,
+				instruct: nil,
+				sampleRate: sampleRate
+			)
+		}
 
 	public static func customVoice(
 		text: String,
 		speaker: String,
+		instruct: String? = nil,
 		language: String,
 		modelID: QwenModelIdentifier = .customVoice0_6B,
 		sampleRate: Int = 24_000
 	) -> Self {
-		.init(
-			text: text,
-			mode: .customVoice,
-			modelID: modelID,
-			language: language,
-			voice: speaker,
-			sampleRate: sampleRate
-		)
-	}
+			.init(
+				text: text,
+				mode: .customVoice,
+				modelID: modelID,
+				language: language,
+				voice: speaker,
+				instruct: instruct,
+				sampleRate: sampleRate
+			)
+		}
 }
 
 public enum QwenSynthesisMode: String, CaseIterable, Sendable {
@@ -576,11 +582,12 @@ private final class CPythonRuntime: @unchecked Sendable {
 			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
 
-		guard let args = pyTupleNew(5) else {
-			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
-		}
-		defer { pyDecRef(args) }
+			let argumentCount = request.mode == .customVoice ? 6 : 5
+			guard let args = pyTupleNew(argumentCount) else {
+				pyErrPrintEx(0)
+				throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+			}
+			defer { pyDecRef(args) }
 
 		guard let textObject = request.text.withCString({ pyUnicodeFromString($0) }) else {
 			pyErrPrintEx(0)
@@ -598,10 +605,19 @@ private final class CPythonRuntime: @unchecked Sendable {
 			pyErrPrintEx(0)
 			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
-		guard let modelObject = request.modelID.rawValue.withCString({ pyUnicodeFromString($0) }) else {
-			pyErrPrintEx(0)
-			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
-		}
+			guard let modelObject = request.modelID.rawValue.withCString({ pyUnicodeFromString($0) }) else {
+				pyErrPrintEx(0)
+				throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+			}
+			let instructValue = request.instruct ?? ""
+			var instructObject: PyObject?
+			if request.mode == .customVoice {
+				guard let created = instructValue.withCString({ pyUnicodeFromString($0) }) else {
+					pyErrPrintEx(0)
+					throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+				}
+				instructObject = created
+			}
 
 		// PyTuple_SetItem steals references on success.
 		guard pyTupleSetItem(args, 0, textObject) == 0 else {
@@ -614,21 +630,31 @@ private final class CPythonRuntime: @unchecked Sendable {
 			pyDecRef(voiceObject)
 			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
 		}
-		guard pyTupleSetItem(args, 2, languageObject) == 0 else {
-			pyErrPrintEx(0)
-			pyDecRef(languageObject)
-			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
-		}
-		guard pyTupleSetItem(args, 3, sampleRateObject) == 0 else {
-			pyErrPrintEx(0)
-			pyDecRef(sampleRateObject)
-			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
-		}
-		guard pyTupleSetItem(args, 4, modelObject) == 0 else {
-			pyErrPrintEx(0)
-			pyDecRef(modelObject)
-			throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
-		}
+			let languageIndex = request.mode == .customVoice ? 3 : 2
+			guard pyTupleSetItem(args, languageIndex, languageObject) == 0 else {
+				pyErrPrintEx(0)
+				pyDecRef(languageObject)
+				throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+			}
+			let sampleRateIndex = request.mode == .customVoice ? 4 : 3
+			guard pyTupleSetItem(args, sampleRateIndex, sampleRateObject) == 0 else {
+				pyErrPrintEx(0)
+				pyDecRef(sampleRateObject)
+				throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+			}
+			let modelIndex = request.mode == .customVoice ? 5 : 4
+			guard pyTupleSetItem(args, modelIndex, modelObject) == 0 else {
+				pyErrPrintEx(0)
+				pyDecRef(modelObject)
+				throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+			}
+			if request.mode == .customVoice, let instructObject {
+				guard pyTupleSetItem(args, 2, instructObject) == 0 else {
+					pyErrPrintEx(0)
+					pyDecRef(instructObject)
+					throw TTMPythonBridgeError.pythonCallFailed(function: functionName)
+				}
+			}
 
 		guard let result = pyObjectCallObject(synthFn, args) else {
 			pyErrPrintEx(0)

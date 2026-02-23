@@ -351,6 +351,8 @@ components:
           type: string
           minLength: 1
           default: ryan
+        instruct:
+          type: string
         language:
           type: string
           minLength: 1
