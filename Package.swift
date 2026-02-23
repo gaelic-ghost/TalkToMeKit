@@ -1,0 +1,51 @@
+// swift-tools-version: 6.2
+// The swift-tools-version declares the minimum version of Swift required to build this package.
+
+import PackageDescription
+
+let package = Package(
+    name: "TalkToMeKit",
+	products: [
+		.executable(
+			name: "TalkToMeServer",
+			targets: [ "TTMServer" ]
+		),
+	    .library(
+	        name: "TalkToMeService",
+	        targets: [ "TTMService" ]
+	    ),
+	],
+    dependencies: [
+		.package(url: "https://github.com/apple/swift-openapi-generator.git", from: "1.10.0"),
+		.package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.9.0"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
+        .package(url: "https://github.com/hummingbird-project/swift-openapi-hummingbird.git", from: "2.0.0"),
+		.package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.10.0"),
+    ],
+    targets: [
+		.target(
+			name: "TTMOpenAPI",
+			dependencies: [
+				.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
+			],
+			plugins: [
+				.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator"),
+			]
+		),
+		.executableTarget(
+			name: "TTMServer",
+			dependencies: [
+				.product(name: "Hummingbird", package: "hummingbird"),
+				.product(name: "OpenAPIHummingbird", package: "swift-openapi-hummingbird"),
+				.target(name: "TTMOpenAPI"),
+				.target(name: "TTMService"),
+			]
+		),
+		.target(
+			name: "TTMService",
+			dependencies: [
+				.product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+			]
+		),
+    ]
+)
