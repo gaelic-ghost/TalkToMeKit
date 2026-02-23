@@ -213,14 +213,6 @@ Defaults:
 - VoiceClone default model: `Qwen/Qwen3-TTS-12Hz-0.6B-Base`
 - CustomVoice default speaker (when `voice` is omitted): `ryan`
 
-### Example app reference
-
-`TalkToMeKitExampleApp` demonstrates the full embedding workflow, including:
-- local package linking to `TalkToMeKit`
-- runtime staging/copy/sign build phase
-- mode/model/language controls in SwiftUI
-- `TTMServiceRuntime` local runtime startup and synthesis calls
-
 ## Quick API smoke test
 
 ```bash
@@ -340,7 +332,7 @@ When embedding `TalkToMeService` into a macOS app, the following items should be
 
 - Scripts
   - Runtime staging script in this repo: `scripts/stage_python_runtime.sh`
-  - App-side copy/sign script (in example app repo): `Scripts/stage_python_runtime.sh`
+  - App-side copy/sign script in your host app project: `Scripts/stage_python_runtime.sh`
 - Build settings (app project)
   - `ENABLE_USER_SCRIPT_SANDBOXING = NO` when app build scripts need sibling checkout access (for example `../TalkToMeKit/...`).
   - `ENABLE_HARDENED_RUNTIME = YES` for production hardening.
@@ -353,7 +345,7 @@ When embedding `TalkToMeService` into a macOS app, the following items should be
   - Prefer Xcode-provided signing identity values (`EXPANDED_CODE_SIGN_IDENTITY`) over hardcoded identities.
 
 Security note:
-- The example app's copy/sign script does not include secrets; it uses Xcode-provided signing identity context at build time.
+- Keep copy/sign scripts secret-free; use Xcode-provided signing identity context at build time.
 - Avoid publishing full CI logs that include detailed local code-signing identity metadata unless needed.
 
 ## Stability smoke
