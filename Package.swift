@@ -54,12 +54,34 @@ let package = Package(
 			name: "TTMService",
 			dependencies: [
 				.product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+				.target(name: "TTMPythonBridge"),
+				.target(name: "TTMPythonRuntimeBundle"),
 			]
 		),
 		.executableTarget(
 			name: "TTMCli",
 			dependencies: [
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
+			]
+		),
+		.target(
+			name: "TTMPythonBridge",
+			resources: [
+				.process("Resources"),
+			]
+		),
+		.testTarget(
+			name: "TTMServiceTests",
+			dependencies: [
+				.target(name: "TTMService"),
+				.target(name: "TTMPythonBridge"),
+				.target(name: "TTMPythonRuntimeBundle"),
+			]
+		),
+		.target(
+			name: "TTMPythonRuntimeBundle",
+			resources: [
+				.copy("Resources/Runtime"),
 			]
 		),
     ]

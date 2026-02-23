@@ -6,3 +6,10 @@ DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+
+# Local staged Python runtime/model artifacts (do not commit)
+Sources/TTMPythonRuntimeBundle/Resources/Runtime/current/
+
+# Generated Python bytecode
+__pycache__/
+*.pyc
