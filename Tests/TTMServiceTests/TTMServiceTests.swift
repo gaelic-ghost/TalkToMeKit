@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 import Testing
-import TTMPythonBridge
+import TTMService
 import TTMPythonRuntimeBundle
 import TTMService
 

@@ -6,7 +6,6 @@ import OpenAPIHummingbird
 import OpenAPIRuntime
 import ServiceLifecycle
 import TTMService
-import TTMPythonBridge
 
 @main
 struct TTMServerMain: AsyncParsableCommand {

@@ -3,7 +3,6 @@ import OpenAPIRuntime
 import Testing
 @testable import TTMServer
 import TTMOpenAPI
-import TTMPythonBridge
 import TTMService
 
 private struct FakeQwenError: Error, Equatable {}

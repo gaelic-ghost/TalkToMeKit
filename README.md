@@ -13,7 +13,7 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 ## Project layout
 
 - `Sources/TTMService`: service-level integration (`TTMQwenService`).
-- `Sources/TTMPythonBridge`: CPython bridge + `qwen_tts_runner.py`.
+- `Sources/TTMService`: service runtime + embedded CPython bridge + `qwen_tts_runner.py`.
 - `Sources/TTMPythonRuntimeBundle`: packaged Python runtime resources.
 - `Sources/TTMServer`: HTTP server and OpenAPI handlers.
 - `scripts/stage_python_runtime.sh`: stage bundled Python runtime + optional Qwen install/model download.
@@ -193,7 +193,6 @@ Use per-request mode, model, voice/speaker, and language:
 
 ```swift
 import TTMService
-import TTMPythonBridge
 
 let wav = try await runtime.synthesize(
 	.init(

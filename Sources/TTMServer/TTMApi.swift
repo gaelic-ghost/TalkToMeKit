@@ -2,7 +2,6 @@ import Foundation
 import Logging
 import OpenAPIRuntime
 import TTMOpenAPI
-import TTMPythonBridge
 import TTMService
 
 struct TTMApi: APIProtocol {

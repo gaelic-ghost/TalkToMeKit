@@ -17,10 +17,6 @@ let package = Package(
 	        name: "TalkToMeService",
 	        targets: [ "TTMService" ]
 	    ),
-	    .library(
-	        name: "TTMPythonBridge",
-	        targets: [ "TTMPythonBridge" ]
-	    ),
 	    .executable(
 	        name: "ttm-cli",
 	        targets: [ "TTMCli" ]
@@ -58,8 +54,10 @@ let package = Package(
 			name: "TTMService",
 			dependencies: [
 				.product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-				.target(name: "TTMPythonBridge"),
 				.target(name: "TTMPythonRuntimeBundle"),
+			],
+			resources: [
+				.process("Resources"),
 			]
 		),
 		.executableTarget(
@@ -68,17 +66,10 @@ let package = Package(
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]
 		),
-		.target(
-			name: "TTMPythonBridge",
-			resources: [
-				.process("Resources"),
-			]
-		),
 		.testTarget(
 			name: "TTMServiceTests",
 			dependencies: [
 				.target(name: "TTMService"),
-				.target(name: "TTMPythonBridge"),
 				.target(name: "TTMPythonRuntimeBundle"),
 			]
 		),
@@ -88,7 +79,6 @@ let package = Package(
 				.target(name: "TTMServer"),
 				.target(name: "TTMOpenAPI"),
 				.target(name: "TTMService"),
-				.target(name: "TTMPythonBridge"),
 			]
 		),
 		.target(
