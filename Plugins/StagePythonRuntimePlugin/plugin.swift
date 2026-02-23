@@ -16,7 +16,7 @@ struct StagePythonRuntimePlugin: CommandPlugin {
 			throw StagePythonRuntimePluginError.scriptNotFound(path: scriptPath)
 		}
 
-		var finalArgs = ["-py", "python3.11"]
+		var finalArgs: [String] = []
 		if !effectiveArgs.isEmpty { finalArgs = effectiveArgs }
 
 		let process = Process()

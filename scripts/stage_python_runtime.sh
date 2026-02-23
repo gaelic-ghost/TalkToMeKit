@@ -9,7 +9,6 @@ Usage:
   scripts/stage_python_runtime.sh [options]
 
 Options:
-  -py PATH, --python PATH Python interpreter to use (default: python3)
   -uv                     Use uv installer (default installer mode is auto)
   --installer NAME        Package installer to use: auto|uv|pip (default: auto)
   --runtime-root PATH     Destination runtime root
@@ -26,7 +25,7 @@ Options:
 USAGE
 }
 
-PYTHON_BIN="python3"
+PYTHON_BIN="python3.11"
 INSTALLER="auto"
 RUNTIME_ROOT="Sources/TTMPythonRuntimeBundle/Resources/Runtime/current"
 MODEL_IDS=()
@@ -52,11 +51,6 @@ require_value() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -py|--python)
-      require_value "$@"
-      PYTHON_BIN="$2"
-      shift 2
-      ;;
     -uv)
       INSTALLER="uv"
       shift
@@ -270,15 +264,12 @@ if [[ "$INSTALL_QWEN" == "1" ]]; then
   fi
 fi
 
-# qwen-tts depends on the external `sox` executable through pysox.
-# Prefer static-sox from the staged env (portable for app sandboxing),
-# then fall back to host sox if static-sox is unavailable.
+# qwen-tts depends on an external `sox` executable through pysox.
+# Stage `sox` from the static-sox package to keep runtime self-contained.
 SOX_SOURCE=""
 SOX_SOURCE="$(python - <<'PY'
 import importlib
 import os
-import shutil
-import sys
 
 def executable(path):
     return bool(path and os.path.isfile(path) and os.access(path, os.X_OK))
@@ -318,22 +309,20 @@ print("")
 PY
 )"
 
-if [[ -z "$SOX_SOURCE" ]] && command -v sox >/dev/null 2>&1; then
-  SOX_SOURCE="$(command -v sox)"
+if [[ -z "$SOX_SOURCE" || ! -f "$SOX_SOURCE" ]]; then
+  echo "static-sox executable not found in staged environment" >&2
+  exit 1
 fi
 
-if [[ -n "$SOX_SOURCE" && -f "$SOX_SOURCE" ]]; then
-  mkdir -p "$RUNTIME_ROOT/bin"
-  chmod u+w "$RUNTIME_ROOT/bin" 2>/dev/null || true
-  rm -f "$RUNTIME_ROOT/bin/sox" "$RUNTIME_ROOT/bin/soxi"
-  cp "$SOX_SOURCE" "$RUNTIME_ROOT/bin/sox"
-  chmod +x "$RUNTIME_ROOT/bin/sox"
-  if command -v soxi >/dev/null 2>&1; then
-    cp "$(command -v soxi)" "$RUNTIME_ROOT/bin/soxi"
-    chmod +x "$RUNTIME_ROOT/bin/soxi"
-  fi
-else
-  echo "Warning: sox executable not found on host and static-sox fallback unavailable." >&2
+SOX_DIR="$(dirname "$SOX_SOURCE")"
+mkdir -p "$RUNTIME_ROOT/bin"
+chmod u+w "$RUNTIME_ROOT/bin" 2>/dev/null || true
+rm -f "$RUNTIME_ROOT/bin/sox" "$RUNTIME_ROOT/bin/soxi"
+cp "$SOX_SOURCE" "$RUNTIME_ROOT/bin/sox"
+chmod +x "$RUNTIME_ROOT/bin/sox"
+if [[ -f "$SOX_DIR/soxi" ]]; then
+  cp "$SOX_DIR/soxi" "$RUNTIME_ROOT/bin/soxi"
+  chmod +x "$RUNTIME_ROOT/bin/soxi"
 fi
 
 cat <<DONE

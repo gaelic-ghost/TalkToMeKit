@@ -32,8 +32,8 @@ Use the SwiftPM command plugin for all normal workflows:
 # Default: install deps + download small models (0.6B CV + 0.6B VC)
 swift package plugin --allow-network-connections all stage-python-runtime
 
-# Force uv installer and explicit python
-swift package plugin --allow-network-connections all stage-python-runtime -- -uv -py python3.11
+# Force uv installer
+swift package plugin --allow-network-connections all stage-python-runtime -- -uv
 
 # Full restage (wipe Runtime/current, reinstall deps, redownload default models)
 swift package plugin --allow-network-connections all stage-python-runtime -- --restage
@@ -48,7 +48,7 @@ swift package plugin --allow-network-connections all stage-python-runtime -- --b
 Direct script usage is still available for local debugging:
 
 ```bash
-./scripts/stage_python_runtime.sh -py python3.11 -uv --noload
+./scripts/stage_python_runtime.sh -uv --noload
 ```
 
 Dependency pinning:
@@ -138,7 +138,7 @@ Use this when embedding `TalkToMeService` into a macOS app target.
 
 ```bash
 cd <path-to-TalkToMeKit>
-swift package plugin --allow-writing-to-package-directory --allow-network-connections all stage-python-runtime -- -uv -py python3.11
+swift package plugin --allow-writing-to-package-directory --allow-network-connections all stage-python-runtime -- -uv
 ```
 
 4. Add a Run Script build phase to the app target (before app code signing), using:
@@ -184,7 +184,7 @@ Notes:
 - If script phase cannot read sibling directories, set app build setting `ENABLE_USER_SCRIPT_SANDBOXING = NO`.
 - `DYLD_*` environment variables are not required for MPS.
 - `ENABLE_OUTGOING_NETWORK_CONNECTIONS` is only needed when downloading models/deps at runtime.
-- The staging script now installs `static-sox` as fallback and stages `sox` into `Runtime/current/bin` when available.
+- The staging script stages `sox` from `static-sox` into `Runtime/current/bin` and does not use host `sox`.
 - Prepend `Runtime/current/bin` to `PATH` before `runtime.start()` so `qwen-tts` can find bundled `sox`.
 
 ### Runtime request options in app code
@@ -358,15 +358,18 @@ Security note:
 
 ## Stability smoke
 
-Run both stability scenarios (mode-switch load test + cold-start VoiceDesign test):
+Run stability smoke as Swift integration tests (mode-switch + cold-start):
 
 ```bash
-./scripts/stability_smoke.sh
+TTM_RUN_STABILITY_SMOKE=1 swift test --filter "TTM stability smoke"
 ```
 
-Run one scenario only:
+Adjust iteration counts:
 
 ```bash
-./scripts/stability_smoke.sh --scenario mixed-switch
-./scripts/stability_smoke.sh --scenario cold-start-vd
+TTM_RUN_STABILITY_SMOKE=1 TTM_STABILITY_MIXED_ITERS=10 TTM_STABILITY_COLD_ITERS=4 swift test --filter "TTM stability smoke"
 ```
+
+Notes:
+- These tests are opt-in and skipped unless `TTM_RUN_STABILITY_SMOKE=1`.
+- They require a staged runtime at `Sources/TTMPythonRuntimeBundle/Resources/Runtime/current`.
