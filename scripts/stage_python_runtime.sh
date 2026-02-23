@@ -40,7 +40,9 @@ NO_LOAD="0"
 INSTALL_QWEN="1"
 RESTAGE="0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REQUIREMENTS_FILE="$SCRIPT_DIR/requirements-qwen.txt"
+UV_PROJECT_DIR="$SCRIPT_DIR/python-runtime"
+UV_LOCK_FILE="$UV_PROJECT_DIR/uv.lock"
+UV_PYPROJECT_FILE="$UV_PROJECT_DIR/pyproject.toml"
 
 require_value() {
   if [[ $# -lt 2 ]]; then
@@ -74,7 +76,7 @@ while [[ $# -gt 0 ]]; do
       MODEL_IDS+=("$2")
       shift 2
       ;;
-    --bigcv|--include-cv-1.7b)
+    --bigcv)
       BIG_CV="1"
       shift
       ;;
@@ -82,7 +84,7 @@ while [[ $# -gt 0 ]]; do
       BIG_VD="1"
       shift
       ;;
-    --bigvc|--include-base-1.7b)
+    --bigvc)
       BIG_VC="1"
       shift
       ;;
@@ -136,8 +138,22 @@ case "$INSTALLER" in
 esac
 
 install_with_pip() {
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "pip installer mode requires uv to export locked requirements" >&2
+    exit 1
+  fi
+  local requirements_export="$WORK_DIR/requirements.lock.txt"
+  UV_CACHE_DIR="${UV_CACHE_DIR:-$WORK_DIR/uv-cache}" \
+    uv export \
+      --directory "$UV_PROJECT_DIR" \
+      --format requirements.txt \
+      --frozen \
+      --no-dev \
+      --no-editable \
+      --no-emit-project \
+      -o "$requirements_export"
   python -m pip install --upgrade pip setuptools wheel
-  python -m pip install -r "$REQUIREMENTS_FILE"
+  python -m pip install -r "$requirements_export"
 }
 
 install_with_uv() {
@@ -147,13 +163,22 @@ install_with_uv() {
   fi
   local uv_cache_dir="${UV_CACHE_DIR:-$WORK_DIR/uv-cache}"
   mkdir -p "$uv_cache_dir"
-  UV_CACHE_DIR="$uv_cache_dir" uv pip install --python "$VENV_DIR/bin/python" --upgrade pip setuptools wheel
-  UV_CACHE_DIR="$uv_cache_dir" uv pip install --python "$VENV_DIR/bin/python" -r "$REQUIREMENTS_FILE"
+  UV_PROJECT_ENVIRONMENT="$VENV_DIR" \
+    UV_CACHE_DIR="$uv_cache_dir" \
+    uv sync \
+      --directory "$UV_PROJECT_DIR" \
+      --frozen \
+      --no-dev \
+      --no-install-project
 }
 
 if [[ "$INSTALL_QWEN" == "1" ]]; then
-  if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
-    echo "Pinned requirements file not found: $REQUIREMENTS_FILE" >&2
+  if [[ ! -f "$UV_PYPROJECT_FILE" ]]; then
+    echo "Python runtime project not found: $UV_PYPROJECT_FILE" >&2
+    exit 1
+  fi
+  if [[ ! -f "$UV_LOCK_FILE" ]]; then
+    echo "Python runtime lockfile not found: $UV_LOCK_FILE" >&2
     exit 1
   fi
   if [[ "$INSTALLER" == "uv" ]]; then

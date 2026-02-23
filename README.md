@@ -52,8 +52,9 @@ Direct script usage is still available for local debugging:
 ```
 
 Dependency pinning:
-- Runtime package versions are pinned in `scripts/requirements-qwen.txt`.
-- Keep this file updated with a validated set when changing torch/qwen/transformers stack.
+- Runtime dependencies are specified in `scripts/python-runtime/pyproject.toml`.
+- Resolved pins are locked in `scripts/python-runtime/uv.lock`.
+- Keep both updated together with a validated set when changing torch/qwen/transformers stack.
 
 Staged location:
 
