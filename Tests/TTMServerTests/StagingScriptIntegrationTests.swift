@@ -115,6 +115,52 @@ struct StagingScriptIntegrationTests {
 		#expect(!FileManager.default.fileExists(atPath: models.path))
 	}
 
+	@Test("fails fast when python3.11 is not available on PATH")
+	func failsWhenPythonMissingFromPath() throws {
+		let runtimeRoot = try makeTempRuntimeRoot()
+		defer { try? FileManager.default.removeItem(at: runtimeRoot) }
+
+		let result = try runStageScript(
+			args: ["--runtime-root", runtimeRoot.path, "--no-install-qwen", "--noload"],
+			environmentOverrides: ["PATH": "/nonexistent"]
+		)
+		#expect(result.exitCode != 0)
+		#expect(result.stderr.contains("Python interpreter not found"))
+	}
+
+	@Test("fails fast when uv installer is explicitly requested but uv is unavailable")
+	func failsWhenUvInstallerRequestedWithoutUv() throws {
+		let runtimeRoot = try makeTempRuntimeRoot()
+		defer { try? FileManager.default.removeItem(at: runtimeRoot) }
+
+		let pythonOnlyPath = try makePythonOnlyPathDirectory()
+		defer { try? FileManager.default.removeItem(at: pythonOnlyPath) }
+
+		let result = try runStageScript(
+			args: ["--runtime-root", runtimeRoot.path, "--installer", "uv", "--restage-packages"],
+			environmentOverrides: ["PATH": "/bin:/usr/bin:\(pythonOnlyPath.path)"]
+		)
+		#expect(result.exitCode != 0)
+		#expect(result.stderr.contains("uv installer requested but uv was not found"))
+	}
+
+	@Test("fails fast when runtime restage requires static-sox but staged packages are missing it")
+	func failsWhenStaticSoxMissingFromStagedPackages() throws {
+		let runtimeRoot = try makeTempRuntimeRoot()
+		defer { try? FileManager.default.removeItem(at: runtimeRoot) }
+
+		try seedRuntimeCategory(at: runtimeRoot)
+		try seedPackagesCategory(at: runtimeRoot)
+
+		let result = try runStageScript(args: [
+			"--runtime-root", runtimeRoot.path,
+			"--restage-runtime",
+			"--noload",
+		])
+		#expect(result.exitCode != 0)
+		#expect(result.stderr.contains("static-sox executable not found"))
+	}
+
 	private func seedRuntimeCategory(at root: URL) throws {
 		let libDir = root.appendingPathComponent("lib")
 		let stdlibDir = libDir.appendingPathComponent("python3.11")
@@ -151,7 +197,10 @@ struct StagingScriptIntegrationTests {
 		return root
 	}
 
-	private func runStageScript(args: [String]) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+	private func runStageScript(
+		args: [String],
+		environmentOverrides: [String: String] = [:]
+	) throws -> (exitCode: Int32, stdout: String, stderr: String) {
 		let process = Process()
 		let stdout = Pipe()
 		let stderr = Pipe()
@@ -159,6 +208,13 @@ struct StagingScriptIntegrationTests {
 		process.executableURL = URL(fileURLWithPath: "/bin/bash")
 		process.arguments = [scriptPath.path] + args
 		process.currentDirectoryURL = repoRoot
+		if !environmentOverrides.isEmpty {
+			var env = ProcessInfo.processInfo.environment
+			for (key, value) in environmentOverrides {
+				env[key] = value
+			}
+			process.environment = env
+		}
 		process.standardOutput = stdout
 		process.standardError = stderr
 
@@ -181,5 +237,33 @@ struct StagingScriptIntegrationTests {
 
 	private var scriptPath: URL {
 		repoRoot.appendingPathComponent("scripts").appendingPathComponent("stage_python_runtime.sh")
+	}
+
+	private func requireCommandDirectory(_ name: String) throws -> String {
+		let process = Process()
+		let output = Pipe()
+		process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+		process.arguments = ["zsh", "-lc", "command -v \(name)"]
+		process.standardOutput = output
+		try process.run()
+		process.waitUntilExit()
+		let data = output.fileHandleForReading.readDataToEndOfFile()
+		let resolved = String(data: data, encoding: .utf8)?
+			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		guard process.terminationStatus == 0, !resolved.isEmpty else {
+			throw NSError(domain: "StagingScriptIntegrationTests", code: 101)
+		}
+		return URL(fileURLWithPath: resolved).deletingLastPathComponent().path
+	}
+
+	private func makePythonOnlyPathDirectory() throws -> URL {
+		let pythonDir = URL(fileURLWithPath: try requireCommandDirectory("python3.11"), isDirectory: true)
+		let source = pythonDir.appendingPathComponent("python3.11")
+		let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+			.appendingPathComponent("ttm-python-only-path-\(UUID().uuidString)", isDirectory: true)
+		try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+		let link = tempDir.appendingPathComponent("python3.11")
+		try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+		return tempDir
 	}
 }
