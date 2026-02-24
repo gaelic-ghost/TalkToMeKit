@@ -8,8 +8,8 @@ struct StabilitySmokeIntegrationTests {
 		guard Self.shouldRun else { return }
 
 		let iterations = Self.envInt("TTM_STABILITY_MIXED_ITERS", default: 20)
-		guard let runtimeRoot = Self.runtimeRoot() else { return }
-		guard let serverBinary = Self.serverBinary() else { return }
+		let runtimeRoot = try Self.requiredRuntimeRoot()
+		let serverBinary = try Self.requiredServerBinary()
 		let port = Self.envInt("TTM_STABILITY_PORT", default: 18091)
 		let harness = ServerHarness(serverBinary: serverBinary, runtimeRoot: runtimeRoot, port: port)
 		defer { harness.stop() }
@@ -61,8 +61,8 @@ struct StabilitySmokeIntegrationTests {
 		guard Self.shouldRun else { return }
 
 		let iterations = Self.envInt("TTM_STABILITY_COLD_ITERS", default: 8)
-		guard let runtimeRoot = Self.runtimeRoot() else { return }
-		guard let serverBinary = Self.serverBinary() else { return }
+		let runtimeRoot = try Self.requiredRuntimeRoot()
+		let serverBinary = try Self.requiredServerBinary()
 		let port = Self.envInt("TTM_STABILITY_PORT", default: 18091)
 
 		for i in 1...iterations {
@@ -119,6 +119,26 @@ struct StabilitySmokeIntegrationTests {
 		return root
 	}
 
+	private static func requiredRuntimeRoot() throws -> URL {
+		guard let root = runtimeRoot() else {
+			let expected = repoRoot()
+				.appendingPathComponent("Sources")
+				.appendingPathComponent("TTMPythonRuntimeBundle")
+				.appendingPathComponent("Resources")
+				.appendingPathComponent("Runtime")
+				.appendingPathComponent("current")
+				.path
+			Issue.record(
+				"""
+				Stability smoke was requested (TTM_RUN_STABILITY_SMOKE=1), but staged runtime was not found.
+				Expected runtime root: \(expected)
+				"""
+			)
+			throw NSError(domain: "StabilitySmoke", code: 2)
+		}
+		return root
+	}
+
 	private static func serverBinary() -> URL? {
 		if let custom = ProcessInfo.processInfo.environment["TTM_STABILITY_SERVER_BINARY"], !custom.isEmpty {
 			let url = URL(fileURLWithPath: custom)
@@ -137,6 +157,28 @@ struct StabilitySmokeIntegrationTests {
 			return candidate
 		}
 		return nil
+	}
+
+	private static func requiredServerBinary() throws -> URL {
+		guard let binary = serverBinary() else {
+			let root = repoRoot()
+			let candidates = [
+				root.appendingPathComponent(".build").appendingPathComponent("debug").appendingPathComponent("TalkToMeServer").path,
+				root.appendingPathComponent(".build").appendingPathComponent("arm64-apple-macosx").appendingPathComponent("debug").appendingPathComponent("TalkToMeServer").path,
+			]
+			let custom = ProcessInfo.processInfo.environment["TTM_STABILITY_SERVER_BINARY"] ?? "<unset>"
+			Issue.record(
+				"""
+				Stability smoke was requested (TTM_RUN_STABILITY_SMOKE=1), but TalkToMeServer binary was not found.
+				TTM_STABILITY_SERVER_BINARY: \(custom)
+				Candidates:
+				- \(candidates[0])
+				- \(candidates[1])
+				"""
+			)
+			throw NSError(domain: "StabilitySmoke", code: 3)
+		}
+		return binary
 	}
 
 	private static func looksLikeWav(_ data: Data) -> Bool {
