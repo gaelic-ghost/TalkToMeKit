@@ -14,6 +14,9 @@ Options:
   --runtime-root PATH     Destination runtime root
                           (default: Sources/TTMPythonRuntimeBundle/Resources/Runtime/current)
   --restage               Remove existing runtime root before staging
+  --restage-runtime       Rebuild runtime files (libpython/stdlib/bin tools)
+  --restage-packages      Reinstall and restage Python site-packages
+  --restage-models        Redownload selected model directories
   --model-id ID           Additional Qwen model id to pre-download (repeatable)
   --bigcv                 Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
   --bigvd                 Also pre-download Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
@@ -39,10 +42,14 @@ BIG_VC="0"
 NO_LOAD="0"
 INSTALL_QWEN="1"
 RESTAGE="0"
+RESTAGE_RUNTIME="0"
+RESTAGE_PACKAGES="0"
+RESTAGE_MODELS="0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UV_PROJECT_DIR="$SCRIPT_DIR/python-runtime"
 UV_LOCK_FILE="$UV_PROJECT_DIR/uv.lock"
 UV_PYPROJECT_FILE="$UV_PROJECT_DIR/pyproject.toml"
+PY_VERSION="3.11"
 
 require_value() {
   if [[ $# -lt 2 ]]; then
@@ -69,6 +76,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --restage)
       RESTAGE="1"
+      shift
+      ;;
+    --restage-runtime)
+      RESTAGE_RUNTIME="1"
+      shift
+      ;;
+    --restage-packages)
+      RESTAGE_PACKAGES="1"
+      shift
+      ;;
+    --restage-models)
+      RESTAGE_MODELS="1"
       shift
       ;;
     --model-id)
@@ -118,15 +137,124 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
 fi
 
 if [[ "$RESTAGE" == "1" ]]; then
+  RESTAGE_RUNTIME="1"
+  RESTAGE_PACKAGES="1"
+  RESTAGE_MODELS="1"
   rm -rf "$RUNTIME_ROOT"
 fi
 
-WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
-VENV_DIR="$WORK_DIR/venv"
+LIB_DEST="$RUNTIME_ROOT/lib/libpython$PY_VERSION.dylib"
+STDLIB_DEST="$RUNTIME_ROOT/lib/python$PY_VERSION"
+SITE_PACKAGES_DEST="$STDLIB_DEST/site-packages"
+MODELS_DEST="$RUNTIME_ROOT/models"
+WORK_DIR=""
+VENV_DIR=""
+PY_INFO_FILE=""
+STDLIB_DIR=""
+PURELIB_DIR=""
+LIBPY_SOURCE=""
+PRESERVED_SITE_PACKAGES=""
 
-"$PYTHON_BIN" -m venv "$VENV_DIR"
-source "$VENV_DIR/bin/activate"
+selected_models=("${DEFAULT_MODELS[@]}")
+if [[ "$BIG_CV" == "1" ]]; then
+  selected_models+=("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+fi
+if [[ "$BIG_VD" == "1" ]]; then
+  selected_models+=("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
+fi
+if [[ "$BIG_VC" == "1" ]]; then
+  selected_models+=("Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+fi
+if [[ "${#MODEL_IDS[@]}" -gt 0 ]]; then
+  selected_models+=("${MODEL_IDS[@]}")
+fi
+
+runtime_present="0"
+if [[ -f "$LIB_DEST" && -d "$STDLIB_DEST" ]]; then
+  runtime_present="1"
+fi
+
+packages_present="0"
+if [[ -d "$SITE_PACKAGES_DEST" && -d "$SITE_PACKAGES_DEST/qwen_tts-0.1.1.dist-info" && -d "$SITE_PACKAGES_DEST/torch-2.10.0.dist-info" ]]; then
+  packages_present="1"
+fi
+
+models_present="1"
+if [[ "$INSTALL_QWEN" == "1" && "$NO_LOAD" != "1" ]]; then
+  for model_id in "${selected_models[@]}"; do
+    if [[ ! -d "$MODELS_DEST/$(basename "$model_id")" ]]; then
+      models_present="0"
+      break
+    fi
+  done
+fi
+
+need_runtime_stage="0"
+need_packages_stage="0"
+need_models_stage="0"
+
+if [[ "$RESTAGE_RUNTIME" == "1" || "$runtime_present" != "1" ]]; then
+  need_runtime_stage="1"
+fi
+
+if [[ "$INSTALL_QWEN" == "1" ]]; then
+  if [[ "$RESTAGE_PACKAGES" == "1" || "$packages_present" != "1" ]]; then
+    need_packages_stage="1"
+  fi
+  if [[ "$NO_LOAD" != "1" ]]; then
+    if [[ "$RESTAGE_MODELS" == "1" || "$models_present" != "1" ]]; then
+      need_models_stage="1"
+    fi
+  fi
+fi
+
+if [[ "$RESTAGE_RUNTIME" == "1" ]]; then
+  if [[ "$RESTAGE_PACKAGES" != "1" && -d "$SITE_PACKAGES_DEST" ]]; then
+    if [[ -z "$WORK_DIR" ]]; then
+      WORK_DIR="$(mktemp -d)"
+    fi
+    PRESERVED_SITE_PACKAGES="$WORK_DIR/site-packages-preserved"
+    rm -rf "$PRESERVED_SITE_PACKAGES"
+    mv "$SITE_PACKAGES_DEST" "$PRESERVED_SITE_PACKAGES"
+  fi
+  rm -f "$LIB_DEST"
+  rm -rf "$STDLIB_DEST"
+  rm -f "$RUNTIME_ROOT/bin/sox" "$RUNTIME_ROOT/bin/soxi"
+fi
+if [[ "$RESTAGE_PACKAGES" == "1" ]]; then
+  rm -rf "$SITE_PACKAGES_DEST"
+fi
+if [[ "$RESTAGE_MODELS" == "1" ]]; then
+  rm -rf "$MODELS_DEST"
+fi
+
+if [[ "$need_runtime_stage" != "1" && "$need_packages_stage" != "1" && "$need_models_stage" != "1" ]]; then
+  cat <<DONE
+Runtime already staged at: $RUNTIME_ROOT
+Python version: $PY_VERSION
+No staging required (all requested categories already present).
+DONE
+  exit 0
+fi
+
+cleanup() {
+  if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+trap cleanup EXIT
+
+ensure_venv() {
+  if [[ -n "$VENV_DIR" ]]; then
+    return
+  fi
+  if [[ -z "$WORK_DIR" ]]; then
+    WORK_DIR="$(mktemp -d)"
+  fi
+  VENV_DIR="$WORK_DIR/venv"
+  "$PYTHON_BIN" -m venv "$VENV_DIR"
+  source "$VENV_DIR/bin/activate"
+}
 
 case "$INSTALLER" in
   auto|uv|pip)
@@ -138,6 +266,7 @@ case "$INSTALLER" in
 esac
 
 install_with_pip() {
+  ensure_venv
   if ! command -v uv >/dev/null 2>&1; then
     echo "pip installer mode requires uv to export locked requirements" >&2
     exit 1
@@ -157,6 +286,7 @@ install_with_pip() {
 }
 
 install_with_uv() {
+  ensure_venv
   if ! command -v uv >/dev/null 2>&1; then
     echo "uv installer requested but uv was not found on PATH" >&2
     exit 1
@@ -172,7 +302,7 @@ install_with_uv() {
       --no-install-project
 }
 
-if [[ "$INSTALL_QWEN" == "1" ]]; then
+if [[ "$need_packages_stage" == "1" ]]; then
   if [[ ! -f "$UV_PYPROJECT_FILE" ]]; then
     echo "Python runtime project not found: $UV_PYPROJECT_FILE" >&2
     exit 1
@@ -192,8 +322,19 @@ if [[ "$INSTALL_QWEN" == "1" ]]; then
   fi
 fi
 
-PY_INFO_FILE="$WORK_DIR/python-info.json"
-python - <<'PY' > "$PY_INFO_FILE"
+if [[ "$need_runtime_stage" == "1" || "$need_packages_stage" == "1" ]]; then
+  if [[ "$need_packages_stage" == "1" ]]; then
+    ensure_venv
+    PY_INFO_PYTHON="python"
+  else
+    PY_INFO_PYTHON="$PYTHON_BIN"
+  fi
+
+  if [[ -z "$WORK_DIR" ]]; then
+    WORK_DIR="$(mktemp -d)"
+  fi
+  PY_INFO_FILE="$WORK_DIR/python-info.json"
+  "$PY_INFO_PYTHON" - <<'PY' > "$PY_INFO_FILE"
 import json
 import os
 import site
@@ -238,61 +379,51 @@ info = {
 print(json.dumps(info))
 PY
 
-PY_VERSION="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$PY_INFO_FILE")"
-STDLIB_DIR="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["stdlib"])' "$PY_INFO_FILE")"
-PURELIB_DIR="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["purelib"])' "$PY_INFO_FILE")"
-LIBPY_SOURCE="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["libpython_path"] or "")' "$PY_INFO_FILE")"
-if [[ -z "$LIBPY_SOURCE" ]]; then
-  echo "Unable to locate libpython from interpreter metadata" >&2
-  exit 1
-fi
-if [[ ! -f "$LIBPY_SOURCE" ]]; then
-  echo "libpython not found at $LIBPY_SOURCE" >&2
-  exit 1
+  STDLIB_DIR="$("$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["stdlib"])' "$PY_INFO_FILE")"
+  PURELIB_DIR="$("$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["purelib"])' "$PY_INFO_FILE")"
+  LIBPY_SOURCE="$("$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["libpython_path"] or "")' "$PY_INFO_FILE")"
 fi
 
-mkdir -p "$RUNTIME_ROOT/lib"
+if [[ "$need_runtime_stage" == "1" ]]; then
+  if [[ -z "$LIBPY_SOURCE" ]]; then
+    echo "Unable to locate libpython from interpreter metadata" >&2
+    exit 1
+  fi
+  if [[ ! -f "$LIBPY_SOURCE" ]]; then
+    echo "libpython not found at $LIBPY_SOURCE" >&2
+    exit 1
+  fi
 
-cp "$LIBPY_SOURCE" "$RUNTIME_ROOT/lib/libpython$PY_VERSION.dylib"
+  mkdir -p "$RUNTIME_ROOT/lib"
+  cp "$LIBPY_SOURCE" "$LIB_DEST"
+  rm -rf "$STDLIB_DEST"
+  mkdir -p "$STDLIB_DEST"
+  cp -R "$STDLIB_DIR/." "$STDLIB_DEST/"
+fi
 
-STDLIB_DEST="$RUNTIME_ROOT/lib/python$PY_VERSION"
-rm -rf "$STDLIB_DEST"
-mkdir -p "$STDLIB_DEST"
-cp -R "$STDLIB_DIR/." "$STDLIB_DEST/"
+if [[ "$need_packages_stage" == "1" ]]; then
+  mkdir -p "$STDLIB_DEST"
+  rm -rf "$SITE_PACKAGES_DEST"
+  mkdir -p "$SITE_PACKAGES_DEST"
+  cp -R "$PURELIB_DIR/." "$SITE_PACKAGES_DEST/"
+elif [[ -n "$PRESERVED_SITE_PACKAGES" && -d "$PRESERVED_SITE_PACKAGES" ]]; then
+  mkdir -p "$STDLIB_DEST"
+  rm -rf "$SITE_PACKAGES_DEST"
+  mv "$PRESERVED_SITE_PACKAGES" "$SITE_PACKAGES_DEST"
+fi
 
-SITE_PACKAGES_DEST="$STDLIB_DEST/site-packages"
-rm -rf "$SITE_PACKAGES_DEST"
-mkdir -p "$SITE_PACKAGES_DEST"
-cp -R "$PURELIB_DIR/." "$SITE_PACKAGES_DEST/"
-
-if [[ "$INSTALL_QWEN" == "1" ]]; then
-  mkdir -p "$RUNTIME_ROOT/models"
-  if [[ "$NO_LOAD" != "1" ]]; then
-    DOWNLOAD_MODELS=("${DEFAULT_MODELS[@]}")
-    if [[ "$BIG_CV" == "1" ]]; then
-      DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
-    fi
-    if [[ "$BIG_VD" == "1" ]]; then
-      DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
-    fi
-    if [[ "$BIG_VC" == "1" ]]; then
-      DOWNLOAD_MODELS+=("Qwen/Qwen3-TTS-12Hz-1.7B-Base")
-    fi
-    if [[ "${#MODEL_IDS[@]}" -gt 0 ]]; then
-      DOWNLOAD_MODELS+=("${MODEL_IDS[@]}")
-    fi
-    if command -v huggingface-cli >/dev/null 2>&1; then
-      for model_id in "${DOWNLOAD_MODELS[@]}"; do
-        HF_HUB_DISABLE_XET=1 huggingface-cli download "$model_id" --local-dir "$RUNTIME_ROOT/models/$(basename "$model_id")" || true
-      done
-    fi
+if [[ "$need_models_stage" == "1" ]]; then
+  mkdir -p "$MODELS_DEST"
+  if command -v huggingface-cli >/dev/null 2>&1; then
+    for model_id in "${selected_models[@]}"; do
+      HF_HUB_DISABLE_XET=1 huggingface-cli download "$model_id" --local-dir "$MODELS_DEST/$(basename "$model_id")" || true
+    done
   fi
 fi
 
-# qwen-tts depends on an external `sox` executable through pysox.
-# Stage `sox` from the static-sox package to keep runtime self-contained.
-SOX_SOURCE=""
-SOX_SOURCE="$(python - <<'PY'
+if [[ "$INSTALL_QWEN" == "1" ]]; then
+  SOX_SOURCE=""
+  SOX_SOURCE="$(PYTHONPATH="$SITE_PACKAGES_DEST${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" - <<'PY'
 import importlib
 import os
 
@@ -306,6 +437,18 @@ except Exception:
     raise SystemExit(0)
 
 candidates = []
+# static-sox 1.0.2 downloads platform binaries on first use.
+# Force resolution so staging works from a clean environment.
+try:
+    run_mod = importlib.import_module("static_sox.run")
+    fetch = getattr(run_mod, "get_or_fetch_platform_executables_else_raise", None)
+    if callable(fetch):
+        path = fetch()
+        if isinstance(path, str):
+            candidates.append(path)
+except Exception:
+    pass
+
 for name in ("SOX_PATH", "sox_path", "BINARY_PATH", "STATIC_SOX_PATH"):
     value = getattr(mod, name, None)
     if isinstance(value, str):
@@ -334,26 +477,27 @@ print("")
 PY
 )"
 
-if [[ -z "$SOX_SOURCE" || ! -f "$SOX_SOURCE" ]]; then
-  echo "static-sox executable not found in staged environment" >&2
-  exit 1
-fi
+  if [[ -z "$SOX_SOURCE" || ! -f "$SOX_SOURCE" ]]; then
+    echo "static-sox executable not found in staged environment" >&2
+    exit 1
+  fi
 
-SOX_DIR="$(dirname "$SOX_SOURCE")"
-mkdir -p "$RUNTIME_ROOT/bin"
-chmod u+w "$RUNTIME_ROOT/bin" 2>/dev/null || true
-rm -f "$RUNTIME_ROOT/bin/sox" "$RUNTIME_ROOT/bin/soxi"
-cp "$SOX_SOURCE" "$RUNTIME_ROOT/bin/sox"
-chmod +x "$RUNTIME_ROOT/bin/sox"
-if [[ -f "$SOX_DIR/soxi" ]]; then
-  cp "$SOX_DIR/soxi" "$RUNTIME_ROOT/bin/soxi"
-  chmod +x "$RUNTIME_ROOT/bin/soxi"
+  SOX_DIR="$(dirname "$SOX_SOURCE")"
+  mkdir -p "$RUNTIME_ROOT/bin"
+  chmod u+w "$RUNTIME_ROOT/bin" 2>/dev/null || true
+  rm -f "$RUNTIME_ROOT/bin/sox" "$RUNTIME_ROOT/bin/soxi"
+  cp "$SOX_SOURCE" "$RUNTIME_ROOT/bin/sox"
+  chmod +x "$RUNTIME_ROOT/bin/sox"
+  if [[ -f "$SOX_DIR/soxi" ]]; then
+    cp "$SOX_DIR/soxi" "$RUNTIME_ROOT/bin/soxi"
+    chmod +x "$RUNTIME_ROOT/bin/soxi"
+  fi
 fi
 
 cat <<DONE
 Runtime staged at: $RUNTIME_ROOT
 Python version: $PY_VERSION
-libpython: $RUNTIME_ROOT/lib/libpython$PY_VERSION.dylib
+libpython: $LIB_DEST
 stdlib: $STDLIB_DEST
 site-packages: $SITE_PACKAGES_DEST
 DONE

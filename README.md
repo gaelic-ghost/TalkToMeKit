@@ -29,14 +29,25 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 Use the SwiftPM command plugin for all normal workflows:
 
 ```bash
-# Default: install deps + download small models (0.6B CV + 0.6B VC)
+# Default: incremental staging.
+# Stages only missing categories (runtime, site-packages, selected models).
+# Default selected models: 0.6B CustomVoice + 0.6B Base (VoiceClone).
 swift package plugin --allow-network-connections all stage-python-runtime
 
 # Force uv installer
 swift package plugin --allow-network-connections all stage-python-runtime -- -uv
 
-# Full restage (wipe Runtime/current, reinstall deps, redownload default models)
+# Full restage (all categories)
 swift package plugin --allow-network-connections all stage-python-runtime -- --restage
+
+# Rebuild runtime only (libpython/stdlib/bin tools)
+swift package plugin --allow-network-connections all stage-python-runtime -- --restage-runtime
+
+# Reinstall site-packages only
+swift package plugin --allow-network-connections all stage-python-runtime -- --restage-packages
+
+# Redownload selected models only
+swift package plugin --allow-network-connections all stage-python-runtime -- --restage-models
 
 # Install deps only (skip model downloads)
 swift package plugin --allow-network-connections all stage-python-runtime -- --noload
@@ -55,6 +66,15 @@ Dependency pinning:
 - Runtime dependencies are specified in `scripts/python-runtime/pyproject.toml`.
 - Resolved pins are locked in `scripts/python-runtime/uv.lock`.
 - Keep both updated together with a validated set when changing torch/qwen/transformers stack.
+
+Staging behavior:
+- Runtime category: `libpython`, stdlib, and bundled `sox` tools.
+- Packages category: `site-packages` runtime dependencies.
+- Models category: selected model directories under `Runtime/current/models`.
+- By default, staging is conditional and only refreshes missing categories.
+- `--restage` forces all categories.
+- `--restage-runtime`, `--restage-packages`, and `--restage-models` target categories independently.
+- `--noload` disables model downloads for the run.
 
 Staged location:
 
