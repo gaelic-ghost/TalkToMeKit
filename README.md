@@ -100,6 +100,48 @@ swift run TalkToMeServer \
 If no `--python-runtime-root` is provided, the server attempts bundled runtime
 auto-discovery from `TTMPythonRuntimeBundle`.
 
+## CLI client (`ttm-cli`)
+
+`TalkToMeKit` includes a CLI client product for the server API.
+
+```bash
+swift run ttm-cli --help
+```
+
+Common checks:
+
+```bash
+swift run ttm-cli health
+swift run ttm-cli version
+swift run ttm-cli status
+swift run ttm-cli inventory
+swift run ttm-cli adapters
+swift run ttm-cli adapter-status qwen3-tts
+swift run ttm-cli speakers --model-id Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+```
+
+Model load/unload:
+
+```bash
+swift run ttm-cli load --mode custom_voice --model-id Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+swift run ttm-cli load --mode voice_design --strict-load
+swift run ttm-cli unload
+```
+
+Synthesize to file:
+
+```bash
+swift run ttm-cli synthesize --mode voice-design --text "Hello from TalkToMeKit" --output /tmp/ttm-vd.wav
+swift run ttm-cli synthesize --mode custom-voice --speaker ryan --text "Hello from TalkToMeKit" --output /tmp/ttm-cv.wav
+swift run ttm-cli synthesize --mode voice-clone --reference-audio /path/to/reference.wav --text "Hello from TalkToMeKit" --output /tmp/ttm-vc.wav
+```
+
+Play immediately:
+
+```bash
+swift run ttm-cli play --mode voice-design --text "Quick playback check"
+```
+
 ## Embed in a macOS app
 
 `TalkToMeService` now exposes an app-facing runtime wrapper:
