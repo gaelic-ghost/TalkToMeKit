@@ -290,6 +290,9 @@ public actor TTMPythonBridge {
 			lastStrictLoad = false
 			lastFallbackApplied = false
 			lastError = nil
+			debugLog("initialize: pythonLibraryPath=\(configuration.pythonLibraryPath) pythonHome=\(configuration.pythonHome) moduleSearchPaths=\(configuration.moduleSearchPaths.joined(separator: ":"))")
+			debugLog("initialize: env PYTHONHOME=\(environmentValue("PYTHONHOME"))")
+			debugLog("initialize: env PYTHONPATH=\(environmentValue("PYTHONPATH"))")
 		} catch {
 			lastError = String(describing: error)
 			throw error
@@ -308,6 +311,7 @@ public actor TTMPythonBridge {
 			qwenModuleLoaded = true
 			modelLoaded = false
 			lastError = nil
+			await logRunnerDiagnosticsIfAvailable(runtime: runtime, configuration: configuration, context: "importQwenModule")
 		} catch {
 			lastError = String(describing: error)
 			throw error
@@ -355,6 +359,7 @@ public actor TTMPythonBridge {
 		requestedSelection = selection
 		lastStrictLoad = strict
 		lastFallbackApplied = false
+		debugLog("loadModel: requested mode=\(selection.mode.rawValue) model=\(selection.modelID.rawValue) strict=\(strict) device_map=\(environmentValue("TTM_QWEN_DEVICE_MAP")) dtype=\(environmentValue("TTM_QWEN_TORCH_DTYPE"))")
 		let orderedSelections: [QwenModelSelection]
 		if strict {
 			orderedSelections = [selection]
@@ -369,6 +374,7 @@ public actor TTMPythonBridge {
 				continue
 			}
 			do {
+				await logRunnerDiagnosticsIfAvailable(runtime: runtime, configuration: configuration, context: "loadModel:\(candidate.modelID.rawValue)")
 				let loaded = try await blockingCall {
 					try runtime.callBooleanFunction(
 						moduleName: configuration.qwenModule,
@@ -470,6 +476,41 @@ public actor TTMPythonBridge {
 					continuation.resume(throwing: error)
 				}
 			}
+		}
+	}
+
+	private func debugEnabled() -> Bool {
+		environmentValue("TTM_QWEN_DEBUG") == "1"
+	}
+
+	private func environmentValue(_ key: String) -> String {
+		guard let value = getenv(key) else {
+			return "<unset>"
+		}
+		return String(cString: value)
+	}
+
+	private func debugLog(_ message: String) {
+		guard debugEnabled() else { return }
+		fputs("[TTMPythonBridge] \(message)\n", stderr)
+	}
+
+	private func logRunnerDiagnosticsIfAvailable(
+		runtime: CPythonRuntime,
+		configuration: PythonRuntimeConfiguration,
+		context: String
+	) async {
+		guard debugEnabled() else { return }
+		do {
+			let diagnostics = try await blockingCall {
+				try runtime.callStringFunction(
+					moduleName: configuration.qwenModule,
+					functionName: "get_runtime_diagnostics"
+				)
+			}
+			debugLog("\(context): runner_diagnostics=\(diagnostics)")
+		} catch {
+			debugLog("\(context): runner_diagnostics_unavailable error=\(error)")
 		}
 	}
 }

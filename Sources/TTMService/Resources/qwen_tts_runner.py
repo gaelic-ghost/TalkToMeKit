@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import io
 import os
+import platform
 import struct
+import sys
 import time
 import wave
 from typing import Any, Optional, Sequence
@@ -175,6 +177,40 @@ def _torch_debug_summary() -> str:
     except Exception:
         mps_built = False
     return f"torch={getattr(torch, '__version__', 'unknown')} mps_built={mps_built} mps_available={mps_available}"
+
+
+def get_runtime_diagnostics() -> str:
+    details: list[str] = [
+        f"python={sys.version.split()[0]}",
+        f"executable={sys.executable}",
+        f"platform={platform.platform()}",
+        f"machine={platform.machine()}",
+        f"pythonhome={os.getenv('PYTHONHOME', '')}",
+        f"device_map={os.getenv('TTM_QWEN_DEVICE_MAP', 'cpu')}",
+        f"dtype={os.getenv('TTM_QWEN_TORCH_DTYPE', 'float32')}",
+        _torch_debug_summary(),
+    ]
+
+    try:
+        import torch  # type: ignore[import-not-found]
+
+        try:
+            mps_available = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+        except Exception:
+            mps_available = False
+
+        if mps_available:
+            try:
+                tensor = torch.empty(1, device="mps")
+                details.append(f"mps_alloc_ok={tensor.device}")
+            except Exception as error:
+                details.append(f"mps_alloc_error={type(error).__name__}:{error}")
+        else:
+            details.append("mps_alloc_skipped=unavailable")
+    except Exception as error:
+        details.append(f"torch_diag_error={type(error).__name__}:{error}")
+
+    return " | ".join(details)
 
 
 def _target_dtype() -> Any:
