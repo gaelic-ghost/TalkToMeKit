@@ -385,3 +385,16 @@ TTM_RUN_STABILITY_SMOKE=1 TTM_STABILITY_MIXED_ITERS=10 TTM_STABILITY_COLD_ITERS=
 Notes:
 - These tests are opt-in and skipped unless `TTM_RUN_STABILITY_SMOKE=1`.
 - They require a staged runtime at `Sources/TTMPythonRuntimeBundle/Resources/Runtime/current`.
+
+## Backend/dtype matrix tests
+
+Run opt-in backend/dtype integration tests (CPU baseline + invalid backend/dtype behavior):
+
+```bash
+TTM_RUN_BACKEND_DTYPE_MATRIX=1 swift test --filter "Backend/dtype matrix"
+```
+
+Notes:
+- These tests are opt-in and skipped unless `TTM_RUN_BACKEND_DTYPE_MATRIX=1`.
+- They require a staged runtime at `Sources/TTMPythonRuntimeBundle/Resources/Runtime/current`.
+- They currently require `Qwen3-TTS-12Hz-0.6B-CustomVoice` to be present under staged `models/`.

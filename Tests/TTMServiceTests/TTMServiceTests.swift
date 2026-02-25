@@ -280,4 +280,201 @@ struct TTMServiceTests {
 			Issue.record("Bundled runtime integration failed: \(error)")
 		}
 	}
+
+	@Test("Backend/dtype matrix: cpu + float32 strict load and synth succeeds")
+	func backendDtypeCPUFloat32() async throws {
+		guard Self.shouldRunBackendDtypeMatrix else { return }
+		let prerequisites = try Self.requireBackendDtypePrerequisites()
+		let selection = QwenModelSelection(mode: .customVoice, modelID: .customVoice0_6B)
+		let request = QwenSynthesisRequest.customVoice(
+			text: "backend dtype cpu float32 check",
+			speaker: "serena",
+			language: "English",
+			modelID: .customVoice0_6B
+		)
+
+		try await withEnvironment([
+			"TTM_QWEN_DEVICE_MAP": "cpu",
+			"TTM_QWEN_TORCH_DTYPE": "float32",
+			"TTM_QWEN_ALLOW_FALLBACK": "0",
+		]) {
+			let bridge = TTMPythonBridge()
+			defer { Task { await bridge.shutdown() } }
+			let configuration = PythonRuntimeConfiguration(
+				pythonLibraryPath: prerequisites.runtime.libraryURL.path,
+				pythonHome: prerequisites.runtime.rootURL.path,
+				moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
+				qwenModule: "qwen_tts_runner"
+			)
+
+			try await withTimeout(seconds: 90) {
+				try await bridge.initialize(configuration: configuration)
+				try await bridge.importQwenModule()
+				let loaded = try await bridge.loadModel(selection: selection, strict: true)
+				#expect(loaded)
+				let audio = try await bridge.synthesize(request)
+				#expect(audio.count > 44)
+				#expect(audio.starts(with: Data("RIFF".utf8)))
+			}
+
+			let status = await bridge.status()
+			#expect(status.modelLoaded)
+			#expect(status.strictLoad)
+			#expect(status.activeModelID == .customVoice0_6B)
+			#expect(!status.fallbackApplied)
+		}
+	}
+
+	@Test("Backend/dtype matrix: invalid dtype falls back to float32 behavior")
+	func backendDtypeInvalidDtypeFallsBack() async throws {
+		guard Self.shouldRunBackendDtypeMatrix else { return }
+		let prerequisites = try Self.requireBackendDtypePrerequisites()
+		let selection = QwenModelSelection(mode: .customVoice, modelID: .customVoice0_6B)
+		let request = QwenSynthesisRequest.customVoice(
+			text: "backend dtype invalid fallback check",
+			speaker: "serena",
+			language: "English",
+			modelID: .customVoice0_6B
+		)
+
+		try await withEnvironment([
+			"TTM_QWEN_DEVICE_MAP": "cpu",
+			"TTM_QWEN_TORCH_DTYPE": "not-a-real-dtype",
+			"TTM_QWEN_ALLOW_FALLBACK": "0",
+		]) {
+			let bridge = TTMPythonBridge()
+			defer { Task { await bridge.shutdown() } }
+			let configuration = PythonRuntimeConfiguration(
+				pythonLibraryPath: prerequisites.runtime.libraryURL.path,
+				pythonHome: prerequisites.runtime.rootURL.path,
+				moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
+				qwenModule: "qwen_tts_runner"
+			)
+
+			try await withTimeout(seconds: 90) {
+				try await bridge.initialize(configuration: configuration)
+				try await bridge.importQwenModule()
+				let loaded = try await bridge.loadModel(selection: selection, strict: true)
+				#expect(loaded)
+				let audio = try await bridge.synthesize(request)
+				#expect(audio.count > 44)
+				#expect(audio.starts(with: Data("RIFF".utf8)))
+			}
+
+			let status = await bridge.status()
+			#expect(status.modelLoaded)
+			#expect(status.lastError == nil)
+		}
+	}
+
+	@Test("Backend/dtype matrix: invalid backend value fails strict model load")
+	func backendDtypeInvalidBackendFailsStrictLoad() async throws {
+		guard Self.shouldRunBackendDtypeMatrix else { return }
+		let prerequisites = try Self.requireBackendDtypePrerequisites()
+		let selection = QwenModelSelection(mode: .customVoice, modelID: .customVoice0_6B)
+
+		try await withEnvironment([
+			"TTM_QWEN_DEVICE_MAP": "definitely-not-a-real-backend",
+			"TTM_QWEN_TORCH_DTYPE": "float32",
+			"TTM_QWEN_ALLOW_FALLBACK": "0",
+		]) {
+			let bridge = TTMPythonBridge()
+			defer { Task { await bridge.shutdown() } }
+			let configuration = PythonRuntimeConfiguration(
+				pythonLibraryPath: prerequisites.runtime.libraryURL.path,
+				pythonHome: prerequisites.runtime.rootURL.path,
+				moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
+				qwenModule: "qwen_tts_runner"
+			)
+
+			try await withTimeout(seconds: 90) {
+				try await bridge.initialize(configuration: configuration)
+				try await bridge.importQwenModule()
+				let loaded = try await bridge.loadModel(selection: selection, strict: true)
+				#expect(!loaded)
+			}
+
+			let status = await bridge.status()
+			#expect(!status.modelLoaded)
+			#expect(status.strictLoad)
+			#expect(status.lastError != nil)
+		}
+	}
+
+	private struct BackendDtypePrerequisites {
+		var runtime: TTMPythonBundledRuntime
+		var modulePath: String
+	}
+
+	private static var shouldRunBackendDtypeMatrix: Bool {
+		ProcessInfo.processInfo.environment["TTM_RUN_BACKEND_DTYPE_MATRIX"] == "1"
+	}
+
+	private static func requireBackendDtypePrerequisites() throws -> BackendDtypePrerequisites {
+		guard let runtime = TTMPythonRuntimeBundleLocator.bundledRuntime(pythonVersion: "3.11") else {
+			Issue.record(
+				"""
+				Backend/dtype matrix was requested (TTM_RUN_BACKEND_DTYPE_MATRIX=1), but bundled runtime was not found.
+				Expected Runtime/current under TTMPythonRuntimeBundle resources.
+				"""
+			)
+			throw NSError(domain: "BackendDtypeMatrix", code: 1)
+		}
+		guard let modulePath = TTMPythonBridgeResources.pythonModulesPath else {
+			Issue.record(
+				"""
+				Backend/dtype matrix was requested (TTM_RUN_BACKEND_DTYPE_MATRIX=1), but Python bridge modules path could not be resolved.
+				"""
+			)
+			throw NSError(domain: "BackendDtypeMatrix", code: 2)
+		}
+		let modelPath = runtime.rootURL
+			.appendingPathComponent("models")
+			.appendingPathComponent("Qwen3-TTS-12Hz-0.6B-CustomVoice")
+			.path
+		guard FileManager.default.fileExists(atPath: modelPath) else {
+			Issue.record(
+				"""
+				Backend/dtype matrix was requested (TTM_RUN_BACKEND_DTYPE_MATRIX=1), but required model is missing.
+				Expected model directory: \(modelPath)
+				"""
+			)
+			throw NSError(domain: "BackendDtypeMatrix", code: 3)
+		}
+		return .init(runtime: runtime, modulePath: modulePath)
+	}
+
+	private func withEnvironment<T>(
+		_ overrides: [String: String?],
+		operation: @escaping @Sendable () async throws -> T
+	) async throws -> T {
+		var original: [String: String?] = [:]
+		for key in overrides.keys {
+			if let raw = getenv(key) {
+				original[key] = String(cString: raw)
+			} else {
+				original[key] = nil
+			}
+		}
+
+		for (key, value) in overrides {
+			if let value {
+				setenv(key, value, 1)
+			} else {
+				unsetenv(key)
+			}
+		}
+
+		defer {
+			for (key, value) in original {
+				if let value {
+					setenv(key, value, 1)
+				} else {
+					unsetenv(key)
+				}
+			}
+		}
+
+		return try await operation()
+	}
 }
