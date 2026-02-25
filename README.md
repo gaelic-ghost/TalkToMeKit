@@ -431,3 +431,4 @@ Notes:
 - Default runtime root is `Sources/TTMPythonRuntimeBundle/Resources/Runtime/current` unless overridden by `TTM_RUNTIME_DIR`.
 - Artifact suites require staged runtime assets (including `lib/libpython3.11.dylib`) and the `Qwen3-TTS-12Hz-0.6B-CustomVoice` model.
 - Backend/dtype and audio suites can be parameterized with `TTM_TEST_BACKEND` and `TTM_TEST_DTYPE`.
+- Set `TTM_ARTIFACT_REQUIRE_PREREQS=1` (or run in CI with `CI=1`) to fail functional/audio suites when runtime/model prerequisites are missing, instead of silently no-oping those tests.

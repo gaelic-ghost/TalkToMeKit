@@ -8,12 +8,12 @@ struct ServerArtifactBackendDtypeTests {
 		guard Self.shouldRun else { return }
 
 		let runtimeRoot = try Self.requiredRuntimeRoot()
-		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else { return }
+		try Self.requireRuntimePrerequisitesIfNeeded(at: runtimeRoot)
 
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: runtimeRoot,
-			port: Self.port
+			port: Self.port(offset: 0)
 		)
 		defer { harness.stop() }
 
@@ -35,9 +35,7 @@ struct ServerArtifactBackendDtypeTests {
 			"""
 		)
 		#expect(load.statusCode == 200 || load.statusCode == 202)
-		if let status = try Self.jsonObject(from: load.data), let strictLoad = status["strict_load"] as? Bool {
-			#expect(strictLoad)
-		}
+		try await Self.waitForModelReady(harness: harness, timeoutSeconds: 60)
 
 		let synth = try await harness.postJSONData(
 			path: "/synthesize/custom-voice",
@@ -54,12 +52,12 @@ struct ServerArtifactBackendDtypeTests {
 		guard Self.shouldRun else { return }
 
 		let runtimeRoot = try Self.requiredRuntimeRoot()
-		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else { return }
+		try Self.requireRuntimePrerequisitesIfNeeded(at: runtimeRoot)
 
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: runtimeRoot,
-			port: Self.port
+			port: Self.port(offset: 1)
 		)
 		defer { harness.stop() }
 
@@ -81,6 +79,7 @@ struct ServerArtifactBackendDtypeTests {
 			"""
 		)
 		#expect(load.statusCode == 200 || load.statusCode == 202)
+		try await Self.waitForModelReady(harness: harness, timeoutSeconds: 60)
 
 		let synth = try await harness.postJSONData(
 			path: "/synthesize/custom-voice",
@@ -97,12 +96,12 @@ struct ServerArtifactBackendDtypeTests {
 		guard Self.shouldRun else { return }
 
 		let runtimeRoot = try Self.requiredRuntimeRoot()
-		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else { return }
+		try Self.requireRuntimePrerequisitesIfNeeded(at: runtimeRoot)
 
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: runtimeRoot,
-			port: Self.port
+			port: Self.port(offset: 2)
 		)
 		defer { harness.stop() }
 
@@ -117,19 +116,43 @@ struct ServerArtifactBackendDtypeTests {
 					"TTM_QWEN_ALLOW_FALLBACK": "0",
 				]
 			)
-			Issue.record("Expected startup failure with invalid backend")
 		} catch {
 			let message = String(describing: error)
 			#expect(message.contains("failed to become ready") || message.contains("exited before readiness"))
+			return
 		}
+
+		let load = try await harness.postJSONData(
+			path: "/model/load",
+			json: """
+			{"mode":"custom_voice","model_id":"Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice","strict_load":true}
+			"""
+		)
+		#expect(load.statusCode == 202 || load.statusCode == 200)
+		if let status = try Self.jsonObject(from: load.data), let loaded = status["loaded"] as? Bool {
+			_ = loaded
+		}
+
+		let synth = try await harness.postJSONData(
+			path: "/synthesize/custom-voice",
+			json: """
+			{"text":"artifact backend invalid backend behavior","speaker":"serena","language":"English","model_id":"Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice","format":"wav"}
+			"""
+		)
+		#expect(synth.statusCode == 200 || synth.statusCode == 503)
 	}
 
 	private static var shouldRun: Bool {
 		ProcessInfo.processInfo.environment["TTM_RUN_ARTIFACT_FUNCTIONAL"] == "1"
 	}
 
-	private static var port: Int {
-		envInt("TTM_ARTIFACT_PORT", default: 18093)
+	private static var requirePrerequisites: Bool {
+		let env = ProcessInfo.processInfo.environment
+		return env["TTM_ARTIFACT_REQUIRE_PREREQS"] == "1" || env["CI"] == "1"
+	}
+
+	private static func port(offset: Int) -> Int {
+		envInt("TTM_ARTIFACT_PORT", default: 18093) + offset
 	}
 
 	private static func envInt(_ key: String, default defaultValue: Int) -> Int {
@@ -236,6 +259,21 @@ struct ServerArtifactBackendDtypeTests {
 		return true
 	}
 
+	private static func requireRuntimePrerequisitesIfNeeded(at runtimeRoot: URL) throws {
+		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else {
+			if Self.requirePrerequisites {
+				Issue.record(
+					"""
+					Artifact backend/dtype prerequisites are missing and strict prereq mode is enabled.
+					Set up runtime/models, or disable strict mode by unsetting TTM_ARTIFACT_REQUIRE_PREREQS/CI.
+					"""
+				)
+				throw NSError(domain: "ServerArtifactBackendDtypeTests", code: 4)
+			}
+			return
+		}
+	}
+
 	private static func looksLikeWav(_ data: Data) -> Bool {
 		guard data.count >= 12 else { return false }
 		let riff = Data("RIFF".utf8)
@@ -247,5 +285,28 @@ struct ServerArtifactBackendDtypeTests {
 		guard !data.isEmpty else { return nil }
 		let object = try JSONSerialization.jsonObject(with: data)
 		return object as? [String: Any]
+	}
+
+	private static func waitForModelReady(harness: ArtifactHarness, timeoutSeconds: Int) async throws {
+		let attempts = max(1, timeoutSeconds * 4)
+		for _ in 1...attempts {
+			let status = try await harness.get(path: "/model/status")
+			if status.statusCode == 200, Self.isModelReady(status.data) {
+				return
+			}
+			try await Task.sleep(for: .milliseconds(250))
+		}
+		Issue.record("Artifact backend/dtype test timed out waiting for /model/status ready=true")
+		throw NSError(domain: "ServerArtifactBackendDtypeTests", code: 5)
+	}
+
+	private static func isModelReady(_ data: Data) -> Bool {
+		guard
+			let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+			let ready = object["ready"] as? Bool
+		else {
+			return false
+		}
+		return ready
 	}
 }

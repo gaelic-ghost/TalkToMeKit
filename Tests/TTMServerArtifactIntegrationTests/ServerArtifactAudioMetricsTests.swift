@@ -8,7 +8,7 @@ struct ServerArtifactAudioMetricsTests {
 		guard Self.shouldRun else { return }
 
 		let runtimeRoot = try Self.requiredRuntimeRoot()
-		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else { return }
+		try Self.requireRuntimePrerequisitesIfNeeded(at: runtimeRoot)
 
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
@@ -54,7 +54,7 @@ struct ServerArtifactAudioMetricsTests {
 		guard Self.shouldRun else { return }
 
 		let runtimeRoot = try Self.requiredRuntimeRoot()
-		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else { return }
+		try Self.requireRuntimePrerequisitesIfNeeded(at: runtimeRoot)
 
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
@@ -97,6 +97,11 @@ struct ServerArtifactAudioMetricsTests {
 
 	private static var shouldRun: Bool {
 		ProcessInfo.processInfo.environment["TTM_RUN_ARTIFACT_AUDIO"] == "1"
+	}
+
+	private static var requirePrerequisites: Bool {
+		let env = ProcessInfo.processInfo.environment
+		return env["TTM_ARTIFACT_REQUIRE_PREREQS"] == "1" || env["CI"] == "1"
 	}
 
 	private static var port: Int {
@@ -205,5 +210,20 @@ struct ServerArtifactAudioMetricsTests {
 		}
 
 		return true
+	}
+
+	private static func requireRuntimePrerequisitesIfNeeded(at runtimeRoot: URL) throws {
+		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else {
+			if Self.requirePrerequisites {
+				Issue.record(
+					"""
+					Artifact audio prerequisites are missing and strict prereq mode is enabled.
+					Set up runtime/models, or disable strict mode by unsetting TTM_ARTIFACT_REQUIRE_PREREQS/CI.
+					"""
+				)
+				throw NSError(domain: "ServerArtifactAudioMetricsTests", code: 4)
+			}
+			return
+		}
 	}
 }

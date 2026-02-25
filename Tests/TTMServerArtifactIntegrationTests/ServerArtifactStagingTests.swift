@@ -8,12 +8,12 @@ struct ServerArtifactStagingTests {
 		guard Self.shouldRun else { return }
 
 		let runtimeRoot = try Self.requiredRuntimeRoot()
-		guard Self.runtimePrerequisitesPresent(at: runtimeRoot) else { return }
+		try Self.requireRuntimePrerequisitesIfNeeded(at: runtimeRoot)
 
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: runtimeRoot,
-			port: Self.port
+			port: Self.port(offset: 0)
 		)
 		defer { harness.stop() }
 
@@ -47,7 +47,7 @@ struct ServerArtifactStagingTests {
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: missingRuntimeRoot,
-			port: Self.port
+			port: Self.port(offset: 1)
 		)
 		defer { harness.stop() }
 
@@ -57,31 +57,43 @@ struct ServerArtifactStagingTests {
 				modelID: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
 				startupTimeoutSeconds: 8
 			)
-			Issue.record("Expected startup failure for missing runtime root")
 		} catch {
 			let message = String(describing: error)
 			#expect(message.contains("failed to become ready") || message.contains("exited before readiness"))
+			return
 		}
+
+		let status = try await harness.get(path: "/model/status")
+		#expect(status.statusCode == 200)
+		#expect(!Self.isModelReady(status.data))
+
+		let synth = try await harness.postJSONData(
+			path: "/synthesize/custom-voice",
+			json: """
+			{"text":"missing runtime root check","speaker":"serena","language":"English","model_id":"Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice","format":"wav"}
+			"""
+		)
+		#expect(synth.statusCode == 503)
 	}
 
-	@Test("artifact fails clearly when startup model ID is invalid")
-	func artifactFailsWhenStartupModelInvalid() async throws {
+	@Test("artifact fails clearly when startup mode/model are incompatible")
+	func artifactFailsWhenStartupModeModelIncompatible() async throws {
 		guard Self.shouldRun else { return }
 
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: try Self.requiredRuntimeRoot(),
-			port: Self.port
+			port: Self.port(offset: 2)
 		)
 		defer { harness.stop() }
 
 		do {
 			try await harness.start(
-				mode: "custom_voice",
-				modelID: "Qwen/Definitely-Not-A-Real-Qwen3-TTS-Model",
+				mode: "voice_design",
+				modelID: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
 				startupTimeoutSeconds: 12
 			)
-			Issue.record("Expected startup failure for invalid startup model")
+			Issue.record("Expected startup failure for incompatible startup mode/model")
 		} catch {
 			let message = String(describing: error)
 			#expect(message.contains("failed to become ready") || message.contains("exited before readiness"))
@@ -92,8 +104,13 @@ struct ServerArtifactStagingTests {
 		ProcessInfo.processInfo.environment["TTM_RUN_ARTIFACT_FUNCTIONAL"] == "1"
 	}
 
-	private static var port: Int {
-		envInt("TTM_ARTIFACT_PORT", default: 18092)
+	private static var requirePrerequisites: Bool {
+		let env = ProcessInfo.processInfo.environment
+		return env["TTM_ARTIFACT_REQUIRE_PREREQS"] == "1" || env["CI"] == "1"
+	}
+
+	private static func port(offset: Int) -> Int {
+		envInt("TTM_ARTIFACT_PORT", default: 18092) + offset
 	}
 
 	private static func envInt(_ key: String, default defaultValue: Int) -> Int {
@@ -198,6 +215,29 @@ struct ServerArtifactStagingTests {
 		}
 
 		return true
+	}
+
+	private static func isModelReady(_ data: Data) -> Bool {
+		guard
+			let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+			let ready = object["ready"] as? Bool
+		else {
+			return false
+		}
+		return ready
+	}
+
+	private static func requireRuntimePrerequisitesIfNeeded(at runtimeRoot: URL) throws {
+		guard !Self.runtimePrerequisitesPresent(at: runtimeRoot) else { return }
+		if Self.requirePrerequisites {
+			Issue.record(
+				"""
+				Artifact functional prerequisites are missing and strict prereq mode is enabled.
+				Set up runtime/models, or disable strict mode by unsetting TTM_ARTIFACT_REQUIRE_PREREQS/CI.
+				"""
+			)
+			throw NSError(domain: "ServerArtifactStagingTests", code: 4)
+		}
 	}
 
 	private static func looksLikeWav(_ data: Data) -> Bool {
