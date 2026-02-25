@@ -52,3 +52,12 @@
 - Avoid XCTest unless an external constraint requires it.
 - Keep formatting consistent with `swift-format` conventions.
 - Keep linting clean against `swiftlint` with clear, maintainable rule intent.
+
+## CLI Tooling Preferences
+
+- Prefer `swift package` for package-focused workflows (dependency graph, targets, manifest intent, and local package validation).
+- Prefer `swift package` subcommands for structural package edits before manually editing `Package.swift`.
+- Use `swift build` and `swift test` as the default first-pass validation commands.
+- Use `xcodebuild` when validating Apple platform integration details that `swift package` does not cover well (schemes, destinations, SDK-specific behavior, and configuration-specific builds/tests).
+- Keep `xcodebuild` invocations explicit and reproducible (always pass scheme, destination or SDK, and configuration when relevant).
+- Prefer deterministic non-interactive CLI usage in automation/CI for both `swift package` and `xcodebuild`.
