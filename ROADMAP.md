@@ -3,16 +3,16 @@
 ## Current Milestone
 - ID: M2
 - Name: Runtime Staging Reliability Hardening
-- Status: In Progress
+- Status: Completed
 - Target Version: v0.5.0
 - Last Updated: 2026-02-25
-- Summary: Core service/server/runtime embedding are implemented and broadly tested, with current work focused on making runtime staging behavior fully deterministic. `swift build` passes; `swift test` currently fails in 2 staging integration cases that gate this milestone.
+- Summary: Runtime staging behavior is now deterministic in full test runs. The prior staging gate is cleared and `swift test` passes end-to-end, including `Runtime staging script (integration)`.
 
 ## Milestones
 | ID | Name | Target Version | Status | Target Date | Notes |
 | --- | --- | --- | --- | --- | --- |
 | M1 | Core Runtime + Server Foundation | v0.4.0 | Completed | 2026-02-24 | Embedded CPython runtime, Qwen-backed service runtime, server endpoints, OpenAPI wiring, and broad integration test scaffolding are in place. |
-| M2 | Runtime Staging Reliability Hardening | v0.5.0 | In Progress | 2026-03-06 | Resolve staging-script regressions and stabilize restage semantics for packages/sox handling. |
+| M2 | Runtime Staging Reliability Hardening | v0.5.0 | Completed | 2026-03-06 | Resolved staging-script regressions and stabilized Python env isolation for restage/sox behavior in full test runs. |
 | M3 | Productization Pass (CLI + CI + Distribution) | v0.6.0 | Planned | 2026-03-27 | Implement `ttm-cli`, tighten CI matrix and prerequisite enforcement, and improve release/operator docs. |
 
 ## Plan History
@@ -34,3 +34,4 @@
 ## Change Log
 - 2026-02-25: Initialized roadmap at repository root as canonical planning record.
 - 2026-02-25: Set active milestone to M2 based on current test status (2 staging integration failures) and build health.
+- 2026-02-25: Cleared M2 test gate after hardening `stage_python_runtime.sh` to run Python staging steps with sanitized `PYTHONHOME`/`PYTHONPATH`; full `swift test` now passes.

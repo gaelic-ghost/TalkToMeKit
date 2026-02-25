@@ -51,6 +51,10 @@ UV_LOCK_FILE="$UV_PROJECT_DIR/uv.lock"
 UV_PYPROJECT_FILE="$UV_PROJECT_DIR/pyproject.toml"
 PY_VERSION="3.11"
 
+run_python_clean_env() {
+  env -u PYTHONHOME -u PYTHONPATH "$PYTHON_BIN" "$@"
+}
+
 require_value() {
   if [[ $# -lt 2 ]]; then
     echo "Missing value for option: $1" >&2
@@ -252,7 +256,7 @@ ensure_venv() {
     WORK_DIR="$(mktemp -d)"
   fi
   VENV_DIR="$WORK_DIR/venv"
-  "$PYTHON_BIN" -m venv "$VENV_DIR"
+  run_python_clean_env -m venv "$VENV_DIR"
   source "$VENV_DIR/bin/activate"
 }
 
@@ -281,8 +285,8 @@ install_with_pip() {
       --no-editable \
       --no-emit-project \
       -o "$requirements_export"
-  python -m pip install --upgrade pip setuptools wheel
-  python -m pip install -r "$requirements_export"
+  env -u PYTHONHOME -u PYTHONPATH python -m pip install --upgrade pip setuptools wheel
+  env -u PYTHONHOME -u PYTHONPATH python -m pip install -r "$requirements_export"
 }
 
 install_with_uv() {
@@ -334,7 +338,7 @@ if [[ "$need_runtime_stage" == "1" || "$need_packages_stage" == "1" ]]; then
     WORK_DIR="$(mktemp -d)"
   fi
   PY_INFO_FILE="$WORK_DIR/python-info.json"
-  "$PY_INFO_PYTHON" - <<'PY' > "$PY_INFO_FILE"
+  env -u PYTHONHOME -u PYTHONPATH "$PY_INFO_PYTHON" - <<'PY' > "$PY_INFO_FILE"
 import json
 import os
 import site
@@ -379,9 +383,9 @@ info = {
 print(json.dumps(info))
 PY
 
-  STDLIB_DIR="$("$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["stdlib"])' "$PY_INFO_FILE")"
-  PURELIB_DIR="$("$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["purelib"])' "$PY_INFO_FILE")"
-  LIBPY_SOURCE="$("$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["libpython_path"] or "")' "$PY_INFO_FILE")"
+  STDLIB_DIR="$(env -u PYTHONHOME -u PYTHONPATH "$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["stdlib"])' "$PY_INFO_FILE")"
+  PURELIB_DIR="$(env -u PYTHONHOME -u PYTHONPATH "$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["purelib"])' "$PY_INFO_FILE")"
+  LIBPY_SOURCE="$(env -u PYTHONHOME -u PYTHONPATH "$PY_INFO_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["libpython_path"] or "")' "$PY_INFO_FILE")"
 fi
 
 if [[ "$need_runtime_stage" == "1" ]]; then
@@ -423,7 +427,7 @@ fi
 
 if [[ "$INSTALL_QWEN" == "1" ]]; then
   SOX_SOURCE=""
-  SOX_SOURCE="$(PYTHONPATH="$SITE_PACKAGES_DEST${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" - <<'PY'
+  SOX_SOURCE="$(env -u PYTHONHOME PYTHONPATH="$SITE_PACKAGES_DEST" "$PYTHON_BIN" - <<'PY'
 import importlib
 import os
 
