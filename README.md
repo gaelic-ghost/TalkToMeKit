@@ -398,3 +398,36 @@ Notes:
 - These tests are opt-in and skipped unless `TTM_RUN_BACKEND_DTYPE_MATRIX=1`.
 - They require a staged runtime at `Sources/TTMPythonRuntimeBundle/Resources/Runtime/current`.
 - They currently require `Qwen3-TTS-12Hz-0.6B-CustomVoice` to be present under staged `models/`.
+
+## Artifact IRL tests
+
+Build the server artifact first:
+
+```bash
+swift build -c release --product TTMServer
+```
+
+Smoke (artifact startup + health + synth):
+
+```bash
+TTM_RUN_ARTIFACT_SMOKE=1 TTM_ARTIFACT_PATH=.build/release/TTMServer swift test --filter ServerArtifactSmokeTests
+```
+
+Functional (staging/failure paths + backend/dtype artifact matrix):
+
+```bash
+TTM_RUN_ARTIFACT_FUNCTIONAL=1 TTM_ARTIFACT_PATH=.build/release/TTMServer swift test --filter ServerArtifactStagingTests
+TTM_RUN_ARTIFACT_FUNCTIONAL=1 TTM_ARTIFACT_PATH=.build/release/TTMServer swift test --filter ServerArtifactBackendDtypeTests
+```
+
+Audio quality metrics (objective checks):
+
+```bash
+TTM_RUN_ARTIFACT_AUDIO=1 TTM_ARTIFACT_PATH=.build/release/TTMServer swift test --filter ServerArtifactAudioMetricsTests
+```
+
+Notes:
+- These suites are opt-in and skipped unless their `TTM_RUN_ARTIFACT_*` env var is set.
+- Default runtime root is `Sources/TTMPythonRuntimeBundle/Resources/Runtime/current` unless overridden by `TTM_RUNTIME_DIR`.
+- Artifact suites require staged runtime assets (including `lib/libpython3.11.dylib`) and the `Qwen3-TTS-12Hz-0.6B-CustomVoice` model.
+- Backend/dtype and audio suites can be parameterized with `TTM_TEST_BACKEND` and `TTM_TEST_DTYPE`.
