@@ -16,7 +16,8 @@ struct ArtifactHarness {
 	mutating func start(
 		mode: String,
 		modelID: String,
-		startupTimeoutSeconds: Int = 30
+		startupTimeoutSeconds: Int = 30,
+		environmentOverrides: [String: String] = [:]
 	) async throws {
 		stop()
 
@@ -42,6 +43,9 @@ struct ArtifactHarness {
 		let runtimeBin = runtimeRoot.appendingPathComponent("bin").path
 		let existingPath = env["PATH"] ?? ""
 		env["PATH"] = existingPath.isEmpty ? runtimeBin : "\(runtimeBin):\(existingPath)"
+		for (key, value) in environmentOverrides {
+			env[key] = value
+		}
 		process.environment = env
 		process.standardOutput = logHandle
 		process.standardError = logHandle
