@@ -81,6 +81,9 @@ let package = Package(
 				.target(name: "TTMService"),
 			]
 		),
+		.testTarget(
+			name: "TTMServerArtifactIntegrationTests"
+		),
 		.target(
 			name: "TTMPythonRuntimeBundle",
 			resources: [
