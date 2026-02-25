@@ -18,6 +18,7 @@ struct ServerArtifactSmokeTests {
 			mode: "custom_voice",
 			modelID: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 		)
+		try await Self.waitForModelReady(harness: harness, timeoutSeconds: 90)
 
 		let health = try await harness.get(path: "/health")
 		#expect(health.statusCode == 200)
@@ -173,5 +174,34 @@ struct ServerArtifactSmokeTests {
 		let riff = Data("RIFF".utf8)
 		let wave = Data("WAVE".utf8)
 		return data.starts(with: riff) && data.subdata(in: 8..<12) == wave
+	}
+
+	private static func waitForModelReady(harness: ArtifactHarness, timeoutSeconds: Int) async throws {
+		let attempts = max(1, timeoutSeconds * 4)
+		for _ in 1...attempts {
+			guard harness.isAlive else {
+				Issue.record("Artifact smoke server exited before model became ready")
+				throw NSError(domain: "ServerArtifactSmokeTests", code: 4)
+			}
+
+			let status = try await harness.get(path: "/model/status")
+			if status.statusCode == 200, Self.isModelReady(status.data) {
+				return
+			}
+			try await Task.sleep(for: .milliseconds(250))
+		}
+
+		Issue.record("Artifact smoke timed out waiting for /model/status ready=true")
+		throw NSError(domain: "ServerArtifactSmokeTests", code: 5)
+	}
+
+	private static func isModelReady(_ data: Data) -> Bool {
+		guard
+			let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+			let ready = object["ready"] as? Bool
+		else {
+			return false
+		}
+		return ready
 	}
 }

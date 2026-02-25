@@ -476,6 +476,13 @@ for candidate in candidates:
 print("")
 PY
 )"
+  SOX_SOURCE="$(printf '%s\n' "$SOX_SOURCE" | tail -n 1 | tr -d '\r')"
+  if [[ -z "$SOX_SOURCE" || ! -f "$SOX_SOURCE" ]]; then
+    FALLBACK_SOX="$(find "$SITE_PACKAGES_DEST/static_sox" -type f -name sox -perm -111 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$FALLBACK_SOX" ]]; then
+      SOX_SOURCE="$FALLBACK_SOX"
+    fi
+  fi
 
   if [[ -z "$SOX_SOURCE" || ! -f "$SOX_SOURCE" ]]; then
     echo "static-sox executable not found in staged environment" >&2
