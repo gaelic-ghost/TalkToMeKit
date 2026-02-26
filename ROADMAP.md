@@ -47,9 +47,19 @@
   - Run bundled bridge integration tests on deterministic `cpu/float32` for now to avoid known 1.7B auto/MPS crash paths.
   - Keep using isolated execution (`scripts/bridge_integrates_isolated.sh`) for heavy native integration coverage.
 
+### 2026-02-26 - CLI Compliance and Coverage Follow-up
+- Scope:
+  - Ensure `ttm-cli` behavior and payloads remain fully compliant with the server API surface.
+  - Add a dedicated `ttm-cli` test suite covering command parsing, request/response handling, and error mapping.
+- Acceptance Criteria:
+  - `ttm-cli` command options and API calls are validated against current server endpoints and request schemas.
+  - `swift test` includes dedicated CLI tests (not only service/server tests).
+  - CLI tests cover success paths and at least key failure modes (invalid args, non-2xx responses, malformed payloads).
+
 ## Change Log
 - 2026-02-25: Initialized roadmap at repository root as canonical planning record.
 - 2026-02-25: Set active milestone to M2 based on current test status (2 staging integration failures) and build health.
 - 2026-02-25: Cleared M2 test gate after hardening `stage_python_runtime.sh` to run Python staging steps with sanitized `PYTHONHOME`/`PYTHONPATH`; full `swift test` now passes.
 - 2026-02-25: Added bundled-model integration stability follow-up notes after reproducing CustomVoice 1.7B meta-tensor failure and post-failure `SIGSEGV (11)` in `swiftpm-testing-helper`.
 - 2026-02-25: Hardened bundled bridge integration tests to enforce strict non-fallback model loads and deterministic `cpu/float32` backend; isolated bridge integration script now passes all three bridge integration cases.
+- 2026-02-26: Added roadmap follow-up items for `ttm-cli` API compliance validation and dedicated CLI test-suite coverage.
