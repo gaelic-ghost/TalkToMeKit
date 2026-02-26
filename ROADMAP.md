@@ -56,6 +56,15 @@
   - `swift test` includes dedicated CLI tests (not only service/server tests).
   - CLI tests cover success paths and at least key failure modes (invalid args, non-2xx responses, malformed payloads).
 
+### 2026-02-26 - Configuration System Follow-up (`swift-configuration`)
+- Scope:
+  - Evaluate migration from ad-hoc environment/config parsing to a unified `swift-configuration`-based approach.
+  - Introduce typed configuration surfaces for server, runtime bridge, and CLI paths where environment variables are currently interpreted directly.
+- Acceptance Criteria:
+  - Configuration defaults and required keys are centralized and documented in one place.
+  - Environment-derived settings used by server/runtime/tests are validated through typed configuration objects.
+  - Core configuration paths have focused unit tests (including invalid/partial configuration cases).
+
 ## Change Log
 - 2026-02-25: Initialized roadmap at repository root as canonical planning record.
 - 2026-02-25: Set active milestone to M2 based on current test status (2 staging integration failures) and build health.
@@ -63,3 +72,4 @@
 - 2026-02-25: Added bundled-model integration stability follow-up notes after reproducing CustomVoice 1.7B meta-tensor failure and post-failure `SIGSEGV (11)` in `swiftpm-testing-helper`.
 - 2026-02-25: Hardened bundled bridge integration tests to enforce strict non-fallback model loads and deterministic `cpu/float32` backend; isolated bridge integration script now passes all three bridge integration cases.
 - 2026-02-26: Added roadmap follow-up items for `ttm-cli` API compliance validation and dedicated CLI test-suite coverage.
+- 2026-02-26: Added roadmap follow-up to evaluate and adopt `swift-configuration` for centralized typed configuration management.
