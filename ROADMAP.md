@@ -31,7 +31,25 @@
   - Staging behavior depends on environment toolchain (`python3.11`, `uv`, and package layout) and can vary across host setups.
   - Some integration suites are intentionally opt-in and may hide regressions when env flags/prereqs are absent.
 
+### 2026-02-25 - Stability Follow-up (Bundled Model Integration)
+- Scope:
+  - Investigate and harden `Bridge integrates ...` model-backed integration tests after repeated native crashes in `swiftpm-testing-helper`.
+  - Keep default `swift test` stable while preserving an explicit path to run heavy bundled-model coverage.
+  - Add deterministic cleanup in integration helpers so bridge teardown is always attempted even after model/synthesis failures.
+- Current Findings:
+  - `TTM_RUN_BUNDLED_MODEL_INTEGRATION=1` with `bridgeIntegratesCustomVoice17BIfAvailable` can fail in Python runtime with `RuntimeError: Tensor.item() cannot be called on meta tensors`.
+  - `bridgeIntegratesVoiceDesign17BIfAvailable` and `bridgeIntegratesCustomVoice17BIfAvailable` can also terminate the process with `SIGSEGV (11)` during model load/import on `device_map=auto` in `swiftpm-testing-helper`.
+  - Crash stacks consistently point at CPython/Torch native paths (`PyEval_AcquireThread`, `pybind11::gil_scoped_acquire`) on queue `TalkToMeKit.TTMPythonBridge.CPython`.
+  - This appears to be an upstream/native runtime hazard, not a Swift Testing assertion/configuration issue.
+- Next Steps:
+  - Keep bundled-model bridge integration tests explicitly opt-in.
+  - Keep bundled integration assertions strict (exact model, `strict` load, fallback disabled) so failures are not masked.
+  - Run bundled bridge integration tests on deterministic `cpu/float32` for now to avoid known 1.7B auto/MPS crash paths.
+  - Keep using isolated execution (`scripts/bridge_integrates_isolated.sh`) for heavy native integration coverage.
+
 ## Change Log
 - 2026-02-25: Initialized roadmap at repository root as canonical planning record.
 - 2026-02-25: Set active milestone to M2 based on current test status (2 staging integration failures) and build health.
 - 2026-02-25: Cleared M2 test gate after hardening `stage_python_runtime.sh` to run Python staging steps with sanitized `PYTHONHOME`/`PYTHONPATH`; full `swift test` now passes.
+- 2026-02-25: Added bundled-model integration stability follow-up notes after reproducing CustomVoice 1.7B meta-tensor failure and post-failure `SIGSEGV (11)` in `swiftpm-testing-helper`.
+- 2026-02-25: Hardened bundled bridge integration tests to enforce strict non-fallback model loads and deterministic `cpu/float32` backend; isolated bridge integration script now passes all three bridge integration cases.

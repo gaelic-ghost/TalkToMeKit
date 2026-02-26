@@ -195,7 +195,10 @@ struct TTMServiceTests {
 		}
 	}
 
-	@Test("Bridge integrates VoiceDesign 1.7B when bundled model is available")
+	@Test(
+		"Bridge integrates VoiceDesign 1.7B when bundled model is available",
+		.enabled(if: Self.shouldRunBundledModelIntegration, "Set TTM_RUN_BUNDLED_MODEL_INTEGRATION=1")
+	)
 	func bridgeIntegratesVoiceDesign17BIfAvailable() async {
 		await assertBundledRuntimeSynthesisIfModelAvailable(
 			selection: .init(mode: .voiceDesign, modelID: .voiceDesign1_7B),
@@ -208,7 +211,10 @@ struct TTMServiceTests {
 		)
 	}
 
-	@Test("Bridge integrates CustomVoice 0.6B when bundled model is available")
+	@Test(
+		"Bridge integrates CustomVoice 0.6B when bundled model is available",
+		.enabled(if: Self.shouldRunBundledModelIntegration, "Set TTM_RUN_BUNDLED_MODEL_INTEGRATION=1")
+	)
 	func bridgeIntegratesCustomVoice06BIfAvailable() async {
 		await assertBundledRuntimeSynthesisIfModelAvailable(
 			selection: .init(mode: .customVoice, modelID: .customVoice0_6B),
@@ -221,7 +227,10 @@ struct TTMServiceTests {
 		)
 	}
 
-	@Test("Bridge integrates CustomVoice 1.7B when bundled model is available")
+	@Test(
+		"Bridge integrates CustomVoice 1.7B when bundled model is available",
+		.enabled(if: Self.shouldRunBundledModelIntegration, "Set TTM_RUN_BUNDLED_MODEL_INTEGRATION=1")
+	)
 	func bridgeIntegratesCustomVoice17BIfAvailable() async {
 		await assertBundledRuntimeSynthesisIfModelAvailable(
 			selection: .init(mode: .customVoice, modelID: .customVoice1_7B),
@@ -245,13 +254,35 @@ struct TTMServiceTests {
 			return
 		}
 
-		setenv("TTM_QWEN_ALLOW_FALLBACK", "1", 1)
-		defer { unsetenv("TTM_QWEN_ALLOW_FALLBACK") }
 		let bundledModelPath = bundledRuntime.rootURL
 			.appendingPathComponent("models")
 			.appendingPathComponent(selection.modelID.rawValue.split(separator: "/").last.map(String.init) ?? "")
 		guard FileManager.default.fileExists(atPath: bundledModelPath.path) else {
 			return
+		}
+
+		let originalDeviceMap = getenv("TTM_QWEN_DEVICE_MAP").map { String(cString: $0) }
+		let originalDType = getenv("TTM_QWEN_TORCH_DTYPE").map { String(cString: $0) }
+		let originalAllowFallback = getenv("TTM_QWEN_ALLOW_FALLBACK").map { String(cString: $0) }
+		setenv("TTM_QWEN_DEVICE_MAP", "cpu", 1)
+		setenv("TTM_QWEN_TORCH_DTYPE", "float32", 1)
+		setenv("TTM_QWEN_ALLOW_FALLBACK", "0", 1)
+		defer {
+			if let originalDeviceMap {
+				setenv("TTM_QWEN_DEVICE_MAP", originalDeviceMap, 1)
+			} else {
+				unsetenv("TTM_QWEN_DEVICE_MAP")
+			}
+			if let originalDType {
+				setenv("TTM_QWEN_TORCH_DTYPE", originalDType, 1)
+			} else {
+				unsetenv("TTM_QWEN_TORCH_DTYPE")
+			}
+			if let originalAllowFallback {
+				setenv("TTM_QWEN_ALLOW_FALLBACK", originalAllowFallback, 1)
+			} else {
+				unsetenv("TTM_QWEN_ALLOW_FALLBACK")
+			}
 		}
 
 		let bridge = TTMPythonBridge()
@@ -266,19 +297,30 @@ struct TTMServiceTests {
 			try await bridge.initialize(configuration: configuration)
 			try await bridge.importQwenModule()
 			let loaded = try await withTimeout(seconds: 90) {
-				try await bridge.loadModel(selection: selection)
+				try await bridge.loadModel(selection: selection, strict: true)
 			}
 			#expect(loaded)
+			let status = await bridge.status()
+			#expect(status.modelLoaded)
+			#expect(status.activeMode == selection.mode)
+			#expect(status.activeModelID == selection.modelID)
+			#expect(status.strictLoad)
+			#expect(!status.fallbackApplied)
 
 			let audio = try await withTimeout(seconds: 90) {
 				try await bridge.synthesize(request)
 			}
 			#expect(!audio.isEmpty)
 			#expect(audio.count > 44)
-			await bridge.shutdown()
 		} catch {
 			Issue.record("Bundled runtime integration failed: \(error)")
 		}
+		do {
+			_ = try await bridge.unloadModel()
+		} catch {
+			// Best-effort unload before bridge shutdown to reduce native teardown races.
+		}
+		await bridge.shutdown()
 	}
 
 	@Test("Backend/dtype matrix: cpu + float32 strict load and synth succeeds")
@@ -298,30 +340,74 @@ struct TTMServiceTests {
 			"TTM_QWEN_TORCH_DTYPE": "float32",
 			"TTM_QWEN_ALLOW_FALLBACK": "0",
 		]) {
-			let bridge = TTMPythonBridge()
-			defer { Task { await bridge.shutdown() } }
-			let configuration = PythonRuntimeConfiguration(
-				pythonLibraryPath: prerequisites.runtime.libraryURL.path,
-				pythonHome: prerequisites.runtime.rootURL.path,
-				moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
-				qwenModule: "qwen_tts_runner"
-			)
+			try await withManagedBridge { bridge in
+				let configuration = PythonRuntimeConfiguration(
+					pythonLibraryPath: prerequisites.runtime.libraryURL.path,
+					pythonHome: prerequisites.runtime.rootURL.path,
+					moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
+					qwenModule: "qwen_tts_runner"
+				)
 
-			try await withTimeout(seconds: 90) {
-				try await bridge.initialize(configuration: configuration)
-				try await bridge.importQwenModule()
-				let loaded = try await bridge.loadModel(selection: selection, strict: true)
-				#expect(loaded)
-				let audio = try await bridge.synthesize(request)
-				#expect(audio.count > 44)
-				#expect(audio.starts(with: Data("RIFF".utf8)))
+				try await withTimeout(seconds: 90) {
+					try await bridge.initialize(configuration: configuration)
+					try await bridge.importQwenModule()
+					let loaded = try await bridge.loadModel(selection: selection, strict: true)
+					#expect(loaded)
+					let audio = try await bridge.synthesize(request)
+					#expect(audio.count > 44)
+					#expect(audio.starts(with: Data("RIFF".utf8)))
+				}
+
+				let status = await bridge.status()
+				#expect(status.modelLoaded)
+				#expect(status.strictLoad)
+				#expect(status.activeModelID == .customVoice0_6B)
+				#expect(!status.fallbackApplied)
 			}
+		}
+	}
 
-			let status = await bridge.status()
-			#expect(status.modelLoaded)
-			#expect(status.strictLoad)
-			#expect(status.activeModelID == .customVoice0_6B)
-			#expect(!status.fallbackApplied)
+	@Test("Backend/dtype matrix: auto backend with unset dtype strict load and synth succeeds")
+	func backendDtypeAutoUnsetDtype() async throws {
+		guard Self.shouldRunBackendDtypeMatrix else { return }
+		let prerequisites = try Self.requireBackendDtypePrerequisites()
+		let selection = QwenModelSelection(mode: .customVoice, modelID: .customVoice0_6B)
+		let request = QwenSynthesisRequest.customVoice(
+			text: "backend dtype auto unset check",
+			speaker: "serena",
+			language: "English",
+			modelID: .customVoice0_6B
+		)
+
+		try await withEnvironment([
+			"TTM_QWEN_DEVICE_MAP": "auto",
+			"TTM_QWEN_TORCH_DTYPE": nil,
+			"TTM_QWEN_ALLOW_FALLBACK": "0",
+		]) {
+			try await withManagedBridge { bridge in
+				let configuration = PythonRuntimeConfiguration(
+					pythonLibraryPath: prerequisites.runtime.libraryURL.path,
+					pythonHome: prerequisites.runtime.rootURL.path,
+					moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
+					qwenModule: "qwen_tts_runner"
+				)
+
+				try await withTimeout(seconds: 90) {
+					try await bridge.initialize(configuration: configuration)
+					try await bridge.importQwenModule()
+					let loaded = try await bridge.loadModel(selection: selection, strict: true)
+					#expect(loaded)
+					let audio = try await bridge.synthesize(request)
+					#expect(audio.count > 44)
+					#expect(audio.starts(with: Data("RIFF".utf8)))
+				}
+
+				let status = await bridge.status()
+				#expect(status.modelLoaded)
+				#expect(status.strictLoad)
+				#expect(status.activeModelID == .customVoice0_6B)
+				#expect(!status.fallbackApplied)
+			}
 		}
 	}
 
@@ -342,28 +428,28 @@ struct TTMServiceTests {
 			"TTM_QWEN_TORCH_DTYPE": "not-a-real-dtype",
 			"TTM_QWEN_ALLOW_FALLBACK": "0",
 		]) {
-			let bridge = TTMPythonBridge()
-			defer { Task { await bridge.shutdown() } }
-			let configuration = PythonRuntimeConfiguration(
-				pythonLibraryPath: prerequisites.runtime.libraryURL.path,
-				pythonHome: prerequisites.runtime.rootURL.path,
-				moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
-				qwenModule: "qwen_tts_runner"
-			)
+			try await withManagedBridge { bridge in
+				let configuration = PythonRuntimeConfiguration(
+					pythonLibraryPath: prerequisites.runtime.libraryURL.path,
+					pythonHome: prerequisites.runtime.rootURL.path,
+					moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
+					qwenModule: "qwen_tts_runner"
+				)
 
-			try await withTimeout(seconds: 90) {
-				try await bridge.initialize(configuration: configuration)
-				try await bridge.importQwenModule()
-				let loaded = try await bridge.loadModel(selection: selection, strict: true)
-				#expect(loaded)
-				let audio = try await bridge.synthesize(request)
-				#expect(audio.count > 44)
-				#expect(audio.starts(with: Data("RIFF".utf8)))
+				try await withTimeout(seconds: 90) {
+					try await bridge.initialize(configuration: configuration)
+					try await bridge.importQwenModule()
+					let loaded = try await bridge.loadModel(selection: selection, strict: true)
+					#expect(loaded)
+					let audio = try await bridge.synthesize(request)
+					#expect(audio.count > 44)
+					#expect(audio.starts(with: Data("RIFF".utf8)))
+				}
+
+				let status = await bridge.status()
+				#expect(status.modelLoaded)
+				#expect(status.lastError == nil)
 			}
-
-			let status = await bridge.status()
-			#expect(status.modelLoaded)
-			#expect(status.lastError == nil)
 		}
 	}
 
@@ -378,32 +464,36 @@ struct TTMServiceTests {
 			"TTM_QWEN_TORCH_DTYPE": "float32",
 			"TTM_QWEN_ALLOW_FALLBACK": "0",
 		]) {
-			let bridge = TTMPythonBridge()
-			defer { Task { await bridge.shutdown() } }
-			let configuration = PythonRuntimeConfiguration(
-				pythonLibraryPath: prerequisites.runtime.libraryURL.path,
-				pythonHome: prerequisites.runtime.rootURL.path,
-				moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
-				qwenModule: "qwen_tts_runner"
-			)
+			try await withManagedBridge { bridge in
+				let configuration = PythonRuntimeConfiguration(
+					pythonLibraryPath: prerequisites.runtime.libraryURL.path,
+					pythonHome: prerequisites.runtime.rootURL.path,
+					moduleSearchPaths: prerequisites.runtime.moduleSearchPaths.map(\.path) + [prerequisites.modulePath],
+					qwenModule: "qwen_tts_runner"
+				)
 
-			try await withTimeout(seconds: 90) {
-				try await bridge.initialize(configuration: configuration)
-				try await bridge.importQwenModule()
-				let loaded = try await bridge.loadModel(selection: selection, strict: true)
-				#expect(!loaded)
+				try await withTimeout(seconds: 90) {
+					try await bridge.initialize(configuration: configuration)
+					try await bridge.importQwenModule()
+					let loaded = try await bridge.loadModel(selection: selection, strict: true)
+					#expect(!loaded)
+				}
+
+				let status = await bridge.status()
+				#expect(!status.modelLoaded)
+				#expect(status.strictLoad)
+				#expect(status.lastError != nil)
 			}
-
-			let status = await bridge.status()
-			#expect(!status.modelLoaded)
-			#expect(status.strictLoad)
-			#expect(status.lastError != nil)
 		}
 	}
 
 	private struct BackendDtypePrerequisites {
 		var runtime: TTMPythonBundledRuntime
 		var modulePath: String
+	}
+
+	private static var shouldRunBundledModelIntegration: Bool {
+		ProcessInfo.processInfo.environment["TTM_RUN_BUNDLED_MODEL_INTEGRATION"] == "1"
 	}
 
 	private static var shouldRunBackendDtypeMatrix: Bool {
@@ -442,6 +532,20 @@ struct TTMServiceTests {
 			throw NSError(domain: "BackendDtypeMatrix", code: 3)
 		}
 		return .init(runtime: runtime, modulePath: modulePath)
+	}
+
+	private func withManagedBridge<T>(
+		operation: @escaping @Sendable (TTMPythonBridge) async throws -> T
+	) async throws -> T {
+		let bridge = TTMPythonBridge()
+		do {
+			let result = try await operation(bridge)
+			await bridge.shutdown()
+			return result
+		} catch {
+			await bridge.shutdown()
+			throw error
+		}
 	}
 
 	private func withEnvironment<T>(

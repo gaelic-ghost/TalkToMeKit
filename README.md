@@ -328,19 +328,19 @@ swift package plugin --allow-network-connections all stage-python-runtime -- --r
 - `TTM_QWEN_LOCAL_MODEL_PATH`: override model path.
 - `TTM_QWEN_MODE`: startup mode fallback (`voice_design` default).
 - `TTM_QWEN_ALLOW_CROSS_MODE_FALLBACK`: when enabled (`1`), loader may fall back across known models/modes.
-- `TTM_QWEN_DEVICE_MAP`: torch/qwen device map (default `cpu`). On Apple Silicon, set to `mps` for GPU acceleration.
-- `TTM_QWEN_TORCH_DTYPE`: torch dtype override (`float32` default, `float16` and `bfloat16` supported by runner).
+- `TTM_QWEN_DEVICE_MAP`: torch/qwen device map (default `auto`). On Apple Silicon, this typically selects `mps` when supported.
+- `TTM_QWEN_TORCH_DTYPE`: optional torch dtype override (`float16` and `bfloat16` supported). Leave unset to let backend defaults apply.
 - `TTM_QWEN_ALLOW_FALLBACK`: allow silent fallback output when model load/synth fails (`1` or `0`).
 - `TTM_PYTHON_ENABLE_FINALIZE`: opt-in CPython finalize on shutdown (`1`); disabled by default for runtime stability with native extension threads.
 
 Apple Silicon performance tip:
 
 ```bash
-export TTM_QWEN_DEVICE_MAP=mps
-export TTM_QWEN_TORCH_DTYPE=float16
+export TTM_QWEN_DEVICE_MAP=auto
+unset TTM_QWEN_TORCH_DTYPE
 ```
 
-If you encounter Metal/MPS assertion failures during model load or synth in an embedded app, use CPU mode:
+If you force `TTM_QWEN_DEVICE_MAP=mps` and encounter runtime synthesis instability (for example NaN/inf sampling errors), the runner now retries once on CPU/float32 automatically. For deterministic CPU mode:
 
 ```bash
 export TTM_QWEN_DEVICE_MAP=cpu
@@ -352,6 +352,22 @@ unset TTM_QWEN_TORCH_DTYPE
 ```bash
 swift build
 swift test
+```
+
+Model-backed bundled bridge integration tests are opt-in:
+
+```bash
+TTM_RUN_BUNDLED_MODEL_INTEGRATION=1 swift test --filter "TTMServiceTests.TTMServiceTests/bridgeIntegrates"
+```
+
+Notes:
+- These tests enforce strict exact-model loads and disable silent fallback output.
+- They currently force `cpu/float32` internally for determinism, due observed native `SIGSEGV (11)` instability in 1.7B auto/MPS load paths.
+
+For better native-runtime isolation (each test in a fresh `swiftpm-testing-helper` process), use:
+
+```bash
+scripts/bridge_integrates_isolated.sh
 ```
 
 ### Troubleshooting: `input verification failed` during link
@@ -430,7 +446,7 @@ Notes:
 
 ## Backend/dtype matrix tests
 
-Run opt-in backend/dtype integration tests (CPU baseline + invalid backend/dtype behavior):
+Run opt-in backend/dtype integration tests (auto backend with dtype unset, CPU baseline, and invalid backend/dtype behavior):
 
 ```bash
 TTM_RUN_BACKEND_DTYPE_MATRIX=1 swift test --filter "Backend/dtype matrix"

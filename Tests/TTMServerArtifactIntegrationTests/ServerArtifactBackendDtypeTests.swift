@@ -47,6 +47,49 @@ struct ServerArtifactBackendDtypeTests {
 		#expect(Self.looksLikeWav(synth.data))
 	}
 
+	@Test("backend/dtype matrix: auto backend with unset dtype serves synth path")
+	func backendDtypeAutoUnsetDtypeStillSynthesizes() async throws {
+		guard Self.shouldRun else { return }
+
+		let runtimeRoot = try Self.requiredRuntimeRoot()
+		try Self.requireRuntimePrerequisitesIfNeeded(at: runtimeRoot)
+
+		var harness = ArtifactHarness(
+			serverBinary: try Self.requiredServerBinary(),
+			runtimeRoot: runtimeRoot,
+			port: Self.port(offset: 1)
+		)
+		defer { harness.stop() }
+
+		try await harness.start(
+			mode: "custom_voice",
+			modelID: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+			startupTimeoutSeconds: 20,
+			environmentOverrides: [
+				"TTM_QWEN_DEVICE_MAP": "auto",
+				"TTM_QWEN_ALLOW_FALLBACK": "0",
+			]
+		)
+
+		let load = try await harness.postJSONData(
+			path: "/model/load",
+			json: """
+			{"mode":"custom_voice","model_id":"Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice","strict_load":true}
+			"""
+		)
+		#expect(load.statusCode == 200 || load.statusCode == 202)
+		try await Self.waitForModelReady(harness: harness, timeoutSeconds: 60)
+
+		let synth = try await harness.postJSONData(
+			path: "/synthesize/custom-voice",
+			json: """
+			{"text":"artifact backend dtype auto unset","speaker":"serena","language":"English","model_id":"Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice","format":"wav"}
+			"""
+		)
+		#expect(synth.statusCode == 200)
+		#expect(Self.looksLikeWav(synth.data))
+	}
+
 	@Test("backend/dtype matrix: invalid dtype still serves synth path")
 	func backendDtypeInvalidDtypeStillSynthesizes() async throws {
 		guard Self.shouldRun else { return }
@@ -57,7 +100,7 @@ struct ServerArtifactBackendDtypeTests {
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: runtimeRoot,
-			port: Self.port(offset: 1)
+			port: Self.port(offset: 2)
 		)
 		defer { harness.stop() }
 
@@ -101,7 +144,7 @@ struct ServerArtifactBackendDtypeTests {
 		var harness = ArtifactHarness(
 			serverBinary: try Self.requiredServerBinary(),
 			runtimeRoot: runtimeRoot,
-			port: Self.port(offset: 2)
+			port: Self.port(offset: 3)
 		)
 		defer { harness.stop() }
 

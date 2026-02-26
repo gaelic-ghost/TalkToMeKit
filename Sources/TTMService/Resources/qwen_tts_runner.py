@@ -186,7 +186,7 @@ def get_runtime_diagnostics() -> str:
         f"platform={platform.platform()}",
         f"machine={platform.machine()}",
         f"pythonhome={os.getenv('PYTHONHOME', '')}",
-        f"device_map={os.getenv('TTM_QWEN_DEVICE_MAP', 'cpu')}",
+        f"device_map={os.getenv('TTM_QWEN_DEVICE_MAP', 'auto')}",
         f"dtype={os.getenv('TTM_QWEN_TORCH_DTYPE', 'float32')}",
         _torch_debug_summary(),
     ]
@@ -214,12 +214,16 @@ def get_runtime_diagnostics() -> str:
 
 
 def _target_dtype() -> Any:
+    raw = os.getenv("TTM_QWEN_TORCH_DTYPE")
+    if raw is None or not raw.strip():
+        return None
+
     try:
         import torch  # type: ignore[import-not-found]
     except Exception:
         return None
 
-    requested = os.getenv("TTM_QWEN_TORCH_DTYPE", "float32").lower()
+    requested = raw.strip().lower()
     if requested == "float16":
         return torch.float16
     if requested == "bfloat16":
@@ -252,7 +256,7 @@ def _create_model(model_id: str) -> Optional[Any]:
 
     source = _resolve_local_model_path(model_id) or model_id
     kwargs = {
-        "device_map": os.getenv("TTM_QWEN_DEVICE_MAP", "cpu"),
+        "device_map": os.getenv("TTM_QWEN_DEVICE_MAP", "auto"),
     }
 
     dtype = _target_dtype()
@@ -373,6 +377,65 @@ def _ensure_loaded(mode: str, model_id: str) -> bool:
     if _MODEL_LOADED and _QWEN_MODEL is not None and _ACTIVE_MODE == mode and _ACTIVE_MODEL_ID == model_id:
         return True
     return load_model(mode=mode, model_id=model_id, strict="0")
+
+
+def _is_sampling_numerics_error(error: BaseException) -> bool:
+    message = str(error)
+    normalized = message.lower()
+    return (
+        "probability tensor contains either `inf`, `nan` or element < 0" in normalized
+        or ("probability tensor contains either" in normalized and ("inf" in normalized or "nan" in normalized))
+    )
+
+
+def _retry_on_cpu_after_sampling_numerics_error(
+    *,
+    error: BaseException,
+    mode: str,
+    model_id: str,
+    generate_fn: Any,
+) -> Optional[bytes]:
+    if not _is_sampling_numerics_error(error):
+        return None
+
+    current_device_map = os.getenv("TTM_QWEN_DEVICE_MAP", "auto").strip().lower()
+    if current_device_map == "cpu":
+        return None
+
+    _debug(
+        "sampling numerical instability detected; retrying on cpu/float32 "
+        f"(mode={mode}, model={model_id}, previous_device_map={current_device_map})"
+    )
+
+    previous_device_map = os.getenv("TTM_QWEN_DEVICE_MAP")
+    previous_dtype = os.getenv("TTM_QWEN_TORCH_DTYPE")
+
+    try:
+        os.environ["TTM_QWEN_DEVICE_MAP"] = "cpu"
+        os.environ["TTM_QWEN_TORCH_DTYPE"] = "float32"
+        unload_model()
+        if not load_model(mode=mode, model_id=model_id, strict="1"):
+            _debug("cpu retry load failed")
+            return None
+
+        try:
+            audio = generate_fn()
+        except Exception as retry_error:
+            _debug(f"cpu retry synthesis failed: {type(retry_error).__name__}: {retry_error}")
+            return None
+
+        _debug("cpu retry synthesis succeeded")
+        return audio
+    finally:
+        if previous_device_map is None:
+            os.environ.pop("TTM_QWEN_DEVICE_MAP", None)
+        else:
+            os.environ["TTM_QWEN_DEVICE_MAP"] = previous_device_map
+
+        if previous_dtype is None:
+            os.environ.pop("TTM_QWEN_TORCH_DTYPE", None)
+        else:
+            os.environ["TTM_QWEN_TORCH_DTYPE"] = previous_dtype
 
 
 def _generate_voice_design(text: str, instruct: str, language: str) -> Optional[bytes]:
@@ -522,7 +585,17 @@ def synthesize_voice_design(text: str, instruct: str, language: str, sample_rate
     if not _ensure_loaded(mode=resolved_mode, model_id=resolved_model):
         raise RuntimeError("Qwen3-TTS runtime unavailable: failed to load model")
 
-    audio = _generate_voice_design(text=text, instruct=instruct or "", language=resolved_language)
+    try:
+        audio = _generate_voice_design(text=text, instruct=instruct or "", language=resolved_language)
+    except RuntimeError as error:
+        audio = _retry_on_cpu_after_sampling_numerics_error(
+            error=error,
+            mode=resolved_mode,
+            model_id=resolved_model,
+            generate_fn=lambda: _generate_voice_design(text=text, instruct=instruct or "", language=resolved_language),
+        )
+        if audio is None:
+            raise
     if audio is not None:
         return audio
 
@@ -543,12 +616,27 @@ def synthesize_custom_voice(text: str, speaker: str, instruct: str, language: st
     if not _ensure_loaded(mode=resolved_mode, model_id=resolved_model):
         raise RuntimeError("Qwen3-TTS runtime unavailable: failed to load model")
 
-    audio = _generate_custom_voice(
-        text=text,
-        speaker=speaker or DEFAULT_SPEAKER,
-        instruct=instruct,
-        language=resolved_language,
-    )
+    try:
+        audio = _generate_custom_voice(
+            text=text,
+            speaker=speaker or DEFAULT_SPEAKER,
+            instruct=instruct,
+            language=resolved_language,
+        )
+    except RuntimeError as error:
+        audio = _retry_on_cpu_after_sampling_numerics_error(
+            error=error,
+            mode=resolved_mode,
+            model_id=resolved_model,
+            generate_fn=lambda: _generate_custom_voice(
+                text=text,
+                speaker=speaker or DEFAULT_SPEAKER,
+                instruct=instruct,
+                language=resolved_language,
+            ),
+        )
+        if audio is None:
+            raise
     if audio is not None:
         return audio
 
@@ -571,11 +659,25 @@ def synthesize_voice_clone(text: str, reference_audio: bytes, language: str, sam
     if not _ensure_loaded(mode=resolved_mode, model_id=resolved_model):
         raise RuntimeError("Qwen3-TTS runtime unavailable: failed to load model")
 
-    audio = _generate_voice_clone(
-        text=text,
-        reference_audio=reference_audio,
-        language=resolved_language,
-    )
+    try:
+        audio = _generate_voice_clone(
+            text=text,
+            reference_audio=reference_audio,
+            language=resolved_language,
+        )
+    except RuntimeError as error:
+        audio = _retry_on_cpu_after_sampling_numerics_error(
+            error=error,
+            mode=resolved_mode,
+            model_id=resolved_model,
+            generate_fn=lambda: _generate_voice_clone(
+                text=text,
+                reference_audio=reference_audio,
+                language=resolved_language,
+            ),
+        )
+        if audio is None:
+            raise
     if audio is not None:
         return audio
 
