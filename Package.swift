@@ -66,17 +66,23 @@ let package = Package(
 				.product(name: "ArgumentParser", package: "swift-argument-parser"),
 			]
 		),
-		.testTarget(
-			name: "TTMServiceTests",
-			dependencies: [
-				.target(name: "TTMService"),
-				.target(name: "TTMPythonRuntimeBundle"),
-			]
-		),
-		.testTarget(
-			name: "TTMServerTests",
-			dependencies: [
-				.target(name: "TTMServer"),
+			.testTarget(
+				name: "TTMServiceTests",
+				dependencies: [
+					.target(name: "TTMService"),
+					.target(name: "TTMPythonRuntimeBundle"),
+				]
+			),
+			.testTarget(
+				name: "TTMCliTests",
+				dependencies: [
+					.target(name: "TTMCli"),
+				]
+			),
+			.testTarget(
+				name: "TTMServerTests",
+				dependencies: [
+					.target(name: "TTMServer"),
 				.target(name: "TTMOpenAPI"),
 				.target(name: "TTMService"),
 			]
