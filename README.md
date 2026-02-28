@@ -7,7 +7,7 @@ Qwen3-TTS, using an embedded arm64 CPython runtime staged inside the package.
 
 - In-process CPython embedding is implemented and running.
 - `TTMService` integrates Qwen3-TTS as a `swift-service-lifecycle` service.
-- `TalkToMeServer` exposes `/synthesize/voice-design`, `/synthesize/custom-voice`, `/synthesize/voice-clone`, and model status/load endpoints.
+- `TTMServer` exposes `/synthesize/voice-design`, `/synthesize/custom-voice`, `/synthesize/voice-clone`, and model status/load endpoints.
 - Bundled runtime auto-discovery is supported via `TTMPythonRuntimeBundle`.
 
 ## Project layout
@@ -88,7 +88,7 @@ Note:
 ## Run server with bundled runtime
 
 ```bash
-swift run TalkToMeServer \
+swift run TTMServer \
   --hostname 127.0.0.1 \
   --port 8091 \
   --python-runtime-root Sources/TTMPythonRuntimeBundle/Resources/Runtime/current \
@@ -144,7 +144,7 @@ swift run ttm-cli play --mode voice-design --text "Quick playback check"
 
 ## Embed in a macOS app
 
-`TalkToMeService` now exposes an app-facing runtime wrapper:
+`TTMService` now exposes an app-facing runtime wrapper:
 
 ```swift
 import Foundation
@@ -192,11 +192,11 @@ let runtime = TTMServiceRuntime(
 
 ### Xcode embedding workflow (recommended)
 
-Use this when embedding `TalkToMeService` into a macOS app target.
+Use this when embedding `TTMService` into a macOS app target.
 
 1. Add local package dependency to your app project:
 `<path-to-TalkToMeKit>`
-2. Link package product `TalkToMeService` to the app target.
+2. Link package product `TTMService` to the app target.
 3. Stage runtime once in the package checkout:
 
 ```bash
@@ -354,6 +354,17 @@ swift build
 swift test
 ```
 
+### Opt-in integration test gates (summary)
+
+Default `swift test` executes unit and fast integration coverage. The following
+suites remain opt-in and require explicit environment flags:
+
+- `TTM_RUN_BUNDLED_MODEL_INTEGRATION=1` for bundled model-backed bridge tests.
+- `TTM_RUN_STABILITY_SMOKE=1` for stability smoke loops.
+- `TTM_RUN_BACKEND_DTYPE_MATRIX=1` for backend/dtype integration matrix.
+- `TTM_RUN_ARTIFACT_SMOKE=1`, `TTM_RUN_ARTIFACT_FUNCTIONAL=1`, and
+  `TTM_RUN_ARTIFACT_AUDIO=1` for release artifact integration suites.
+
 Model-backed bundled bridge integration tests are opt-in:
 
 ```bash
@@ -370,6 +381,17 @@ For better native-runtime isolation (each test in a fresh `swiftpm-testing-helpe
 scripts/bridge_integrates_isolated.sh
 ```
 
+### Repository search hygiene
+
+`Runtime/current` can be very large when staged locally. Prefer scoped searches
+that exclude it (and other generated caches):
+
+```bash
+rg --glob '!Sources/TTMPythonRuntimeBundle/Resources/Runtime/current/**' --glob '!**/__pycache__/**' "<pattern>"
+```
+
+See `scripts/search_repo.sh` for a reusable wrapper.
+
 ### Troubleshooting: `input verification failed` during link
 
 On some toolchain combinations (for example Swift 6.2.3 + Xcode 26.2), `ld`
@@ -384,7 +406,7 @@ functional runtime or link failure.
 If you want quieter CI/build logs, build with debug info disabled:
 
 ```bash
-swift build --product TalkToMeServer -Xswiftc -gnone
+swift build --product TTMServer -Xswiftc -gnone
 ```
 
 ### Troubleshooting: macOS deployment/linker mismatch warnings
@@ -394,7 +416,7 @@ You may also see warnings like:
 - `ld: warning: building for macOS-11.0, but linking with dylib '/usr/lib/swift/libswiftCore.dylib' which was built for newer version 13.0`
 
 In this package, these are emitted while linking the Swift OpenAPI generator
-tool used by the `OpenAPIGenerator` plugin, not while linking `TalkToMeServer`.
+tool used by the `OpenAPIGenerator` plugin, not while linking `TTMServer`.
 The upstream `swift-openapi-generator` package currently declares
 `.macOS(.v10_15)`, which can trigger these warnings with newer Xcode/Swift
 toolchains.
@@ -406,7 +428,7 @@ These warnings are generally benign. If you need quieter CI logs, either:
 
 ## Embedding checklist (macOS apps)
 
-When embedding `TalkToMeService` into a macOS app, the following items should be explicitly accounted for:
+When embedding `TTMService` into a macOS app, the following items should be explicitly accounted for:
 
 - Scripts
   - Runtime staging script in this repo: `scripts/stage_python_runtime.sh`
@@ -490,3 +512,10 @@ Notes:
 - Artifact suites require staged runtime assets (including `lib/libpython3.11.dylib`) and the `Qwen3-TTS-12Hz-0.6B-CustomVoice` model.
 - Backend/dtype and audio suites can be parameterized with `TTM_TEST_BACKEND` and `TTM_TEST_DTYPE`.
 - Set `TTM_ARTIFACT_REQUIRE_PREREQS=1` (or run in CI with `CI=1`) to fail functional/audio suites when runtime/model prerequisites are missing, instead of silently no-oping those tests.
+
+## Development Quickstart
+
+```bash
+swift build
+swift test
+```

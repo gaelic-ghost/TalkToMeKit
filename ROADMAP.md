@@ -1,19 +1,32 @@
 # Project Roadmap
 
 ## Current Milestone
-- ID: M2
-- Name: Runtime Staging Reliability Hardening
-- Status: Completed
-- Target Version: v0.5.0
-- Last Updated: 2026-02-25
-- Summary: Runtime staging behavior is now deterministic in full test runs. The prior staging gate is cleared and `swift test` passes end-to-end, including `Runtime staging script (integration)`.
+- ID: M3
+- Name: Productization Pass (CLI + CI + Distribution)
+- Status: In Progress
+- Target Version: v0.6.0
+- Last Updated: 2026-02-28
+- Summary: Risk-first refactor execution is active. Docs and naming parity, dedicated CLI tests, and typed environment configuration are now implemented alongside modular server/CLI/bridge decomposition.
 
 ## Milestones
 | ID | Name | Target Version | Status | Target Date | Notes |
 | --- | --- | --- | --- | --- | --- |
 | M1 | Core Runtime + Server Foundation | v0.4.0 | Completed | 2026-02-24 | Embedded CPython runtime, Qwen-backed service runtime, server endpoints, OpenAPI wiring, and broad integration test scaffolding are in place. |
 | M2 | Runtime Staging Reliability Hardening | v0.5.0 | Completed | 2026-03-06 | Resolved staging-script regressions and stabilized Python env isolation for restage/sox behavior in full test runs. |
-| M3 | Productization Pass (CLI + CI + Distribution) | v0.6.0 | Planned | 2026-03-27 | Implement `ttm-cli`, tighten CI matrix and prerequisite enforcement, and improve release/operator docs. |
+| M3 | Productization Pass (CLI + CI + Distribution) | v0.6.0 | In Progress | 2026-03-27 | `ttm-cli` is implemented and now has dedicated tests. Current focus is modular decomposition, config centralization, and release/operator docs hardening. |
+
+## Ticket Execution Status (2026-02-28)
+| Ticket | Title | Status | Notes |
+| --- | --- | --- | --- |
+| TKT-00 | Baseline Guardrails and Scope Lock | Completed | Baseline contract captured in `docs/refactor-plan.md`. |
+| TKT-01 | Docs and Naming Parity Hardening | Completed | README naming and command parity aligned to package products. |
+| TKT-02 | Dedicated CLI Test Target | Completed | Added `TTMCliTests` target with parsing/build/transport behavior coverage. |
+| TKT-03 | CLI Internal Modularization | Completed | CLI split into focused files with shared synthesis request builder and seams. |
+| TKT-04 | Server API Handler Decomposition | Completed | `TTMApi` split into endpoint-family extensions plus shared core helpers. |
+| TKT-05 | Python Bridge Decomposition | Completed | Bridge actor, type model, and CPython runtime internals separated into focused files. |
+| TKT-06 | Typed Configuration Consolidation | Completed | Typed server/runtime env parsing added with focused tests and env compatibility retained. |
+| TKT-07 | Repository Hygiene for Large Local Runtime Artifacts | Completed | Added search hygiene documentation and `scripts/search_repo.sh`. |
+| TKT-08 | Roadmap and Milestone Reconciliation | Completed | Milestone/ticket status reconciled in roadmap. |
 
 ## Plan History
 ### 2026-02-25 - Accepted Plan (v0.5.0 / M2)
@@ -52,18 +65,18 @@
   - Ensure `ttm-cli` behavior and payloads remain fully compliant with the server API surface.
   - Add a dedicated `ttm-cli` test suite covering command parsing, request/response handling, and error mapping.
 - Acceptance Criteria:
-  - `ttm-cli` command options and API calls are validated against current server endpoints and request schemas.
-  - `swift test` includes dedicated CLI tests (not only service/server tests).
-  - CLI tests cover success paths and at least key failure modes (invalid args, non-2xx responses, malformed payloads).
+  - `ttm-cli` command options and API calls are validated against current server endpoints and request schemas. ✅
+  - `swift test` includes dedicated CLI tests (not only service/server tests). ✅
+  - CLI tests cover success paths and at least key failure modes (invalid args, non-2xx responses, malformed payloads). ✅
 
 ### 2026-02-26 - Configuration System Follow-up (`swift-configuration`)
 - Scope:
   - Evaluate migration from ad-hoc environment/config parsing to a unified `swift-configuration`-based approach.
   - Introduce typed configuration surfaces for server, runtime bridge, and CLI paths where environment variables are currently interpreted directly.
 - Acceptance Criteria:
-  - Configuration defaults and required keys are centralized and documented in one place.
-  - Environment-derived settings used by server/runtime/tests are validated through typed configuration objects.
-  - Core configuration paths have focused unit tests (including invalid/partial configuration cases).
+  - Configuration defaults and required keys are centralized and documented in one place. ✅
+  - Environment-derived settings used by server/runtime/tests are validated through typed configuration objects. ✅
+  - Core configuration paths have focused unit tests (including invalid/partial configuration cases). ✅
 
 ## Change Log
 - 2026-02-25: Initialized roadmap at repository root as canonical planning record.
@@ -73,3 +86,4 @@
 - 2026-02-25: Hardened bundled bridge integration tests to enforce strict non-fallback model loads and deterministic `cpu/float32` backend; isolated bridge integration script now passes all three bridge integration cases.
 - 2026-02-26: Added roadmap follow-up items for `ttm-cli` API compliance validation and dedicated CLI test-suite coverage.
 - 2026-02-26: Added roadmap follow-up to evaluate and adopt `swift-configuration` for centralized typed configuration management.
+- 2026-02-28: Executed ticketed refactor plan (`TKT-00` to `TKT-08`) including CLI/server/bridge decomposition, docs parity hardening, typed env config parsing, and dedicated CLI tests.
