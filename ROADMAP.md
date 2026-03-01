@@ -5,8 +5,8 @@
 - Name: Productization Pass (CLI + CI + Distribution)
 - Status: In Progress
 - Target Version: v0.6.0
-- Last Updated: 2026-02-28
-- Summary: Risk-first refactor execution is active. Docs and naming parity, dedicated CLI tests, and typed environment configuration are now implemented alongside modular server/CLI/bridge decomposition.
+- Last Updated: 2026-03-01
+- Summary: Risk-first refactor execution is complete, explicit CI checks for `swift build`, `swift test`, `TTMCliTests`, and `TTMApiTests` are now configured, and the next step is publishing `v0.6.0` as a beta GitHub release.
 
 ## Milestones
 | ID | Name | Target Version | Status | Target Date | Notes |
@@ -27,6 +27,11 @@
 | TKT-06 | Typed Configuration Consolidation | Completed | Typed server/runtime env parsing added with focused tests and env compatibility retained. |
 | TKT-07 | Repository Hygiene for Large Local Runtime Artifacts | Completed | Added search hygiene documentation and `scripts/search_repo.sh`. |
 | TKT-08 | Roadmap and Milestone Reconciliation | Completed | Milestone/ticket status reconciled in roadmap. |
+
+## M3 Acceptance Gates
+1. CI must run `swift build`, full `swift test`, `TTMCliTests`, and `TTMApiTests` on pull requests and `main` pushes.
+2. Release tag must follow `vx.x.x` format and be pushed before creating the GitHub release object.
+3. Release object for `v0.6.0` should be created as prerelease/beta while integration soak continues.
 
 ## Plan History
 ### 2026-02-25 - Accepted Plan (v0.5.0 / M2)
@@ -87,3 +92,4 @@
 - 2026-02-26: Added roadmap follow-up items for `ttm-cli` API compliance validation and dedicated CLI test-suite coverage.
 - 2026-02-26: Added roadmap follow-up to evaluate and adopt `swift-configuration` for centralized typed configuration management.
 - 2026-02-28: Executed ticketed refactor plan (`TKT-00` to `TKT-08`) including CLI/server/bridge decomposition, docs parity hardening, typed env config parsing, and dedicated CLI tests.
+- 2026-03-01: Added GitHub Actions CI workflow with explicit `swift build`, `swift test`, `TTMCliTests`, and `TTMApiTests` checks; queued `v0.6.0` beta tagging/release.
