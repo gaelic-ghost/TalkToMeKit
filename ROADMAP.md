@@ -4,16 +4,16 @@
 - ID: M3
 - Name: Productization Pass (CLI + CI + Distribution)
 - Status: In Progress
-- Target Version: v0.6.0
+- Target Version: v0.7.0
 - Last Updated: 2026-03-01
-- Summary: Risk-first refactor execution is complete, explicit CI checks for `swift build`, `swift test`, `TTMCliTests`, and `TTMApiTests` are now configured, and the next step is publishing `v0.6.0` as a beta GitHub release.
+- Summary: Risk-first refactor execution is complete, explicit CI checks for `swift build`, `swift test`, `TTMCliTests`, and `TTMApiTests` are now configured, and beta release `v0.7.0-beta.1` is published for soak.
 
 ## Milestones
 | ID | Name | Target Version | Status | Target Date | Notes |
 | --- | --- | --- | --- | --- | --- |
 | M1 | Core Runtime + Server Foundation | v0.4.0 | Completed | 2026-02-24 | Embedded CPython runtime, Qwen-backed service runtime, server endpoints, OpenAPI wiring, and broad integration test scaffolding are in place. |
 | M2 | Runtime Staging Reliability Hardening | v0.5.0 | Completed | 2026-03-06 | Resolved staging-script regressions and stabilized Python env isolation for restage/sox behavior in full test runs. |
-| M3 | Productization Pass (CLI + CI + Distribution) | v0.6.0 | In Progress | 2026-03-27 | `ttm-cli` is implemented and now has dedicated tests. Current focus is modular decomposition, config centralization, and release/operator docs hardening. |
+| M3 | Productization Pass (CLI + CI + Distribution) | v0.7.0 | In Progress | 2026-03-27 | `ttm-cli` is implemented and now has dedicated tests. Current focus is modular decomposition, config centralization, CI enforcement, and beta soak. |
 
 ## Ticket Execution Status (2026-02-28)
 | Ticket | Title | Status | Notes |
@@ -31,7 +31,7 @@
 ## M3 Acceptance Gates
 1. CI must run `swift build`, full `swift test`, `TTMCliTests`, and `TTMApiTests` on pull requests and `main` pushes.
 2. Release tag must follow `vx.x.x` format and be pushed before creating the GitHub release object.
-3. Release object for `v0.6.0` should be created as prerelease/beta while integration soak continues.
+3. Release object for `v0.7.0` should be created as prerelease/beta while integration soak continues.
 
 ## Plan History
 ### 2026-02-25 - Accepted Plan (v0.5.0 / M2)
@@ -93,3 +93,4 @@
 - 2026-02-26: Added roadmap follow-up to evaluate and adopt `swift-configuration` for centralized typed configuration management.
 - 2026-02-28: Executed ticketed refactor plan (`TKT-00` to `TKT-08`) including CLI/server/bridge decomposition, docs parity hardening, typed env config parsing, and dedicated CLI tests.
 - 2026-03-01: Added GitHub Actions CI workflow with explicit `swift build`, `swift test`, `TTMCliTests`, and `TTMApiTests` checks; queued `v0.6.0` beta tagging/release.
+- 2026-03-01: Published prerelease object `v0.7.0-beta.1` from tag `v0.7.0`.
